@@ -1,0 +1,160 @@
+name: Contracts
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "contracts/**"
+      - ".github/workflows/contracts.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "contracts/**"
+      - ".github/workflows/contracts.yml"
+
+defaults:
+  run:
+    working-directory: contracts
+
+env:
+  CARGO_TERM_COLOR: always
+  # Soroban / Stellar CLI version — pin this and bump intentionally
+  STELLAR_CLI_VERSION: "22.7.1"
+
+jobs:
+  check:
+    name: Check & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32v1-none
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: contracts-${{ runner.os }}-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: contracts-${{ runner.os }}-
+
+      - name: cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy (native)
+        # Run clippy against the native target so it can resolve all deps;
+        # the wasm target is validated by the build job below.
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: contracts-${{ runner.os }}-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: contracts-${{ runner.os }}-
+
+      - name: cargo test (native)
+        # Soroban contract unit tests run on the native target via soroban-sdk's
+        # test helpers (no network required).
+        run: cargo test --all-features
+
+  build-wasm:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain + wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: contracts-${{ runner.os }}-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: contracts-${{ runner.os }}-
+
+      - name: Build WASM (release)
+        run: cargo build --target wasm32v1-none --release
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-wasm
+          path: contracts/target/wasm32v1-none/release/*.wasm
+          retention-days: 30
+
+  # ── Testnet deploy (only on pushes to main) ─────────────────────────────────
+  # Deploys compiled WASM to Stellar testnet.
+  # Requires a funded testnet keypair stored as STELLAR_SECRET_KEY in repo secrets.
+  #
+  # Uncomment when the contracts are ready for a persistent testnet deployment.
+  #
+  # deploy-testnet:
+  #   name: Deploy to Testnet
+  #   runs-on: ubuntu-latest
+  #   needs: build-wasm
+  #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+  #   environment: testnet
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Install Rust + wasm target
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         targets: wasm32v1-none
+  #
+  #     - name: Download WASM artifacts
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: contract-wasm
+  #         path: contracts/target/wasm32v1-none/release
+  #
+  #     - name: Install Stellar CLI
+  #       run: |
+  #         cargo install stellar-cli --version ${{ env.STELLAR_CLI_VERSION }} --locked
+  #
+  #     - name: Configure Stellar network
+  #       run: |
+  #         stellar network add testnet \
+  #           --rpc-url https://soroban-testnet.stellar.org \
+  #           --network-passphrase "Test SDF Network ; September 2015"
+  #
+  #     - name: Import deploy keypair
+  #       run: |
+  #         echo "${{ secrets.STELLAR_SECRET_KEY }}" | \
+  #           stellar keys add deployer --secret-key --stdin
+  #
+  #     - name: Deploy contracts
+  #       run: |
+  #         stellar contract deploy \
+  #           --wasm target/wasm32v1-none/release/contracts.wasm \
+  #           --source deployer \
+  #           --network testnet

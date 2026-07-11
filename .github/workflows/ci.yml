@@ -1,0 +1,41 @@
+name: CI
+
+# Root-level CI gate — runs all three pipelines together.
+# Useful as a required status check on PRs that touch multiple workspaces
+# (e.g. a PR that changes both contracts and frontend).
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  frontend:
+    name: Frontend
+    uses: ./.github/workflows/frontend.yml
+
+  backend:
+    name: Backend
+    uses: ./.github/workflows/backend.yml
+
+  contracts:
+    name: Contracts
+    uses: ./.github/workflows/contracts.yml
+
+  # Single status check that downstream branch-protection rules can require.
+  all-green:
+    name: All CI green
+    runs-on: ubuntu-latest
+    needs: [frontend, backend, contracts]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.frontend.result }}" != "success" || \
+                "${{ needs.backend.result }}" != "success" || \
+                "${{ needs.contracts.result }}" != "success" ]]; then
+            echo "One or more CI jobs failed."
+            exit 1
+          fi
+          echo "All CI jobs passed."
