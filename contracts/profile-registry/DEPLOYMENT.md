@@ -161,6 +161,7 @@ stellar contract invoke \
 | `register` (handle: `weave_dev`) | [`10df30b8ffbd3fc3a9d9626d90eb1ea94e10ed4a0f13c497e010ebdbb996a27c`](https://stellar.expert/explorer/testnet/tx/10df30b8ffbd3fc3a9d9626d90eb1ea94e10ed4a0f13c497e010ebdbb996a27c) → `"1"` |
 | `get_profile` (id: 1) | Returned full profile struct ✅ |
 | `resolve_handle` (handle: `weave_dev`) | Returned `"1"` ✅ |
+| `register` (handle: `weave_graph_demo`) | [`f1cc8e4e1631a3722a1b465b33cf9d66c9dc9ad58ebc745a1ae6177370734990`](https://stellar.expert/explorer/testnet/tx/f1cc8e4e1631a3722a1b465b33cf9d66c9dc9ad58ebc745a1ae6177370734990) → `"2"` — registered 2026-07-12 as part of FollowGraph end-to-end demo |
 
 ---
 
@@ -201,4 +202,4 @@ test result: ok. 19 passed; 0 failed; 0 ignored
 - **Auth model:** Every mutating function loads the owner from storage and calls `owner.require_auth()` — never trusts a caller-supplied address. Read functions (`get_profile`, `resolve_handle`) are fully permissionless.
 - **Storage:** `Profile` and `Handle` entries use **persistent** storage with TTL extended to ~1 year (6,307,200 ledgers at 5s close time) on every write, with a threshold of ~30 days (518,400 ledgers). `Admin` and `NextId` use instance storage.
 - **Events:** Every mutation emits an event. Topics are `profile_registered` and `profile_updated` — canonical names referenced in the indexer design in `docs/weave_technical_spec.md`.
-- **follower_count / following_count:** Fields exist in the `Profile` struct but are always 0. Reserved for future cross-contract calls from `FollowGraph` — not mutated by this contract.
+- **follower_count / following_count:** Fields exist in the `Profile` struct but are always `0` and are never mutated by this contract. Real counts are owned by `FollowGraph` (`CBO2USOJ4MII4GWULU2YGBIAIUN7333SFU5S5R3GKLAP6FGT5DSO5BOR`) — query `get_follower_count` / `get_following_count` there, not here. See `contracts/follow-graph/DEPLOYMENT.md` for the full rationale.

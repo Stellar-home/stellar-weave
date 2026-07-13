@@ -1,5 +1,5 @@
 [workspace]
-members = ["profile-registry"]
+members = ["profile-registry", "follow-graph"]
 resolver = "2"
 
 # soroban-env-host uses the ed25519-dalek v2 API internally (rand_core compat),
