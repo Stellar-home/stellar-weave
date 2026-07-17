@@ -1,36 +1,19 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { fraunces, plexSans, plexMono } from "@/lib/fonts";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "Weave — Social Graph Demo",
+  title: "Weave — The Social Graph Stellar Was Missing",
   description:
-    "A decentralized social graph on Stellar. Connect your wallet, register a profile, and follow other profiles on-chain.",
+    "A decentralized, permissionless social graph protocol on Stellar. Identity, follows, and reputation on-chain — payments woven in from day one.",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-        {children}
-      </body>
+    <html lang="en" className={`${fraunces.variable} ${plexSans.variable} ${plexMono.variable}`}>
+      <body className="bg-ink text-star antialiased">{children}</body>
     </html>
   );
 }

@@ -81,6 +81,9 @@ export function profileRegistryError(err: unknown): string {
   if (msg.toLowerCase().includes("user rejected")) {
     return "You cancelled the transaction in your wallet.";
   }
+  if (msg.toLowerCase().includes("account not found")) {
+    return "Your account doesn't exist on testnet yet. Make sure it has been funded — try reconnecting your wallet.";
+  }
   return `Something went wrong: ${msg}`;
 }
 

@@ -66,6 +66,22 @@ export function RegisterProfile({ address, signTx, onRegistered }: Props) {
     setFormState({ status: "submitting" });
 
     try {
+      // On testnet, fund the account via Friendbot if it doesn't exist yet.
+      // This is a no-op if the account is already funded.
+      try {
+        const friendbotRes = await fetch(
+          `https://friendbot.stellar.org?addr=${encodeURIComponent(address)}`,
+        );
+        if (!friendbotRes.ok && friendbotRes.status !== 400) {
+          // 400 means "already funded" — anything else is unexpected but non-fatal.
+          console.warn("[RegisterProfile] Friendbot returned", friendbotRes.status);
+        }
+      } catch (fundErr) {
+        // Network failure hitting Friendbot is non-fatal; the submit will fail
+        // with a clearer error if the account truly doesn't exist.
+        console.warn("[RegisterProfile] Friendbot unreachable", fundErr);
+      }
+
       const client = makeProfileRegistryClient(address, signTx);
 
       // Build the transaction.
