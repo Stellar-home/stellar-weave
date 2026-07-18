@@ -4,3 +4,49 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# HTTP server
+axum = "0.8.9"
+
+# Async runtime
+tokio = { version = "1.53.0", features = ["full"] }
+
+# Postgres with compile-time checked queries and migrations
+sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "macros", "bigdecimal", "chrono"] }
+
+# BigDecimal for u128 profile_id stored as NUMERIC(39,0) in Postgres
+bigdecimal = { version = "0.4.10", features = ["serde"] }
+
+# Soroban / Stellar RPC client — official Stellar crate, same version as stellar-cli 27.0.0
+stellar-rpc-client = "27.0.0"
+
+# XDR decoding for event topics and values (base64 feature for the base64 strings the RPC returns)
+stellar-xdr = { version = "27.0.0", features = ["base64"] }
+
+# Strkey encoding for Stellar addresses (G... and C... format)
+stellar-strkey = "0.0.13"
+
+# Serialization
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.150"
+
+# .env loading
+dotenvy = "0.15.7"
+
+# Structured logging
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# Date/time for indexed_at / updated_at columns
+chrono = { version = "0.4.41", features = ["serde"] }
+
+# Error context/propagation
+anyhow = "1.0.98"
+
+# HTTP server utilities
+tower = "0.5.2"
+tower-http = { version = "0.6.6", features = ["trace"] }
+
+[dev-dependencies]
+# Used in integration tests to spin up a temporary Postgres database
+sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "macros", "bigdecimal", "chrono", "migrate"] }
+tokio = { version = "1.53.0", features = ["full"] }

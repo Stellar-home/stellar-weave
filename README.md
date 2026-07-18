@@ -1,8 +1,10 @@
 # Weave
 
-**A decentralized, permissionless social graph protocol built on Stellar.**
+**A decentralized, permissionless social graph protocol on Stellar.**
 
-> Status: 🚧 Early development — core Soroban contracts are being built first. See [Roadmap](#roadmap) and [`docs/weave_technical_spec.md`](./docs/weave_technical_spec.md) for the full build spec.
+> Status: 🟢 Active development — 2 of 4 core Soroban contracts are live on testnet, with a
+> working end-to-end wallet demo. See [Roadmap](#roadmap), [Deployed Contracts](#deployed-contracts),
+> [Try the Live Demo](#try-the-live-demo), and [`docs/weave_technical_spec.md`](./docs/weave_technical_spec.md).
 
 ---
 
@@ -10,12 +12,59 @@
 
 Decentralized social protocols have split into two camps, and neither has cracked it:
 
-- **Crypto-native protocols** (Lens, Farcaster) have real on-chain programmability and composability, but tiny, expensive-to-scale user bases — after years and hundreds of millions in funding, neither has sustained 100K daily active users.
-- **Federated protocols** (Bluesky/AT Protocol) have real scale — 40M+ users — but no programmable, on-chain economic layer. No native payments, no composability with other financial primitives.
+- **Crypto-native protocols** (Lens, Farcaster) have real on-chain programmability and composability, but tiny, expensive-to-scale user bases.
+- **Federated protocols** (Bluesky/AT Protocol) have real scale — 40M+ users — but no programmable, on-chain economic layer.
 
-Nobody has combined mainstream-viable cost/UX with native payments. **That gap is Weave's opportunity on Stellar** — sub-5-second finality and sub-cent fees let Weave behave like cheap, federated-style infrastructure while still being a public ledger with native asset rails and every profile is a funded wallet by construction.
+Nobody has combined mainstream-viable cost/UX with native payments. **That gap is Weave's opportunity on Stellar** — sub-5-second finality and sub-cent fees let Weave behave like cheap, federated-style infrastructure while still being a public ledger with native asset rails, where every profile is a funded wallet by construction.
 
 Full competitive research and rationale: [`docs/weave_technical_spec.md`](./docs/weave_technical_spec.md).
+
+---
+
+## Try the Live Demo
+
+**`/demo`** is a working, three-step flow against real testnet contracts — not a mock:
+
+1. **Connect** a wallet (Freighter, xBull, Albedo, Lobstr, or Hana, via
+   [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit) — not
+   Freighter-only).
+2. **Register** a profile — a real `ProfileRegistry.register` transaction, signed by your
+   connected wallet.
+3. **Follow** another profile — a real `FollowGraph.follow` transaction, with live
+   `is_following` / follower-count reads immediately after.
+
+Run it locally: `cd frontend && npm install && npm run dev`, then visit `/demo`.
+
+---
+
+## Deployed Contracts
+
+| Contract | Status | Testnet Contract ID | Docs |
+|---|---|---|---|
+| `ProfileRegistry` | ✅ Live — 5 public functions | [`CAVUZWNQ...MZO7ZLDU`](https://stellar.expert/explorer/testnet/contract/CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU) | [`contracts/profile-registry/DEPLOYMENT.md`](./contracts/profile-registry/DEPLOYMENT.md) |
+| `FollowGraph` | ✅ Live | [`CBO2USOJ...T5DSO5BOR`](https://stellar.expert/explorer/testnet/contract/CBO2USOJ4MII4GWULU2YGBIAIUN7333SFU5S5R3GKLAP6FGT5DSO5BOR) | [`contracts/follow-graph/DEPLOYMENT.md`](./contracts/follow-graph/DEPLOYMENT.md) |
+| `ReputationRegistry` | ⏳ Not started | — | — |
+| `PostAnchor` | ⏳ Not started | — | — |
+
+**`ProfileRegistry`'s 5 functions:** `register`, `get_profile`, `resolve_handle`,
+`update_metadata`, `transfer_ownership`. (The last two are fully implemented, tested, and
+deployed — easy to miss since most examples only demo the first three.)
+
+> **⚠️ `follower_count` / `following_count` on `Profile` are always `0`.** These fields
+> exist in `ProfileRegistry`'s struct but are never written to — `ProfileRegistry` was
+> deployed before `FollowGraph` existed and has no mutation path for them, and Soroban
+> contracts are immutable post-deploy. **Real counts live in `FollowGraph`** —
+> call `get_follower_count` / `get_following_count` there, not `ProfileRegistry.get_profile`.
+> See `contracts/follow-graph/DEPLOYMENT.md` for the full design note. If you're building a
+> client against `ProfileRegistry` alone, do not surface its `follower_count` field to users.
+
+**Live proof, verifiable independently by anyone:** Profile 1 followed Profile 2 on testnet —
+[`follow_created` transaction](https://stellar.expert/explorer/testnet/tx/35c06183c749f0d9980b494b00b041a9e55d0293018d318ac75e71e9b200205b),
+after which `is_following(1, 2)` returns `true` and `get_follower_count(2)` returns `1` against
+live RPC.
+
+37 unit tests passing across both contracts (19 + 18), covering auth enforcement, handle
+validation, pagination boundaries, and cross-contract call correctness.
 
 ---
 
@@ -31,15 +80,19 @@ Full competitive research and rationale: [`docs/weave_technical_spec.md`](./docs
 ├───────────────────────────────────────────────────────────┤
 │  Content Layer  (IPFS/Arweave — off-chain, hash on-chain)  │
 ├───────────────────────────────────────────────────────────┤
-│  Identity Layer  (Soroban: Profile / Follow / Reputation)  │
+│  Identity Layer  (Soroban: Profile ✅ / Follow ✅ / Reputation ⏳) │
 └───────────────────────────────────────────────────────────┘
 ```
 
-**On-chain (Soroban):** profile identity, follow edges, reputation/attestation, post-content hash anchoring.
-**Off-chain:** post/media content (IPFS/Arweave), indexer + GraphQL read API, RDF/JSON-LD semantic export.
-**Payments:** native Stellar payment operations for tipping — not routed through custom contract accounting.
+**On-chain (Soroban):** profile identity, follow edges + counts, reputation/attestation
+*(planned)*, post-content hash anchoring *(planned)*.
+**Off-chain:** post/media content (IPFS/Arweave), indexer + GraphQL read API *(not started
+— see [Roadmap](#roadmap))*, RDF/JSON-LD semantic export.
+**Payments:** native Stellar payment operations for tipping — not routed through custom
+contract accounting.
 
-Design principles, full contract interfaces, and the on-chain/off-chain data placement table live in the [technical spec](./docs/weave_technical_spec.md).
+Design principles, full contract interfaces, and the on-chain/off-chain data placement
+table live in the [technical spec](./docs/weave_technical_spec.md).
 
 ---
 
@@ -47,10 +100,11 @@ Design principles, full contract interfaces, and the on-chain/off-chain data pla
 
 | Layer | Stack |
 |---|---|
-| Smart contracts | Rust + [`soroban-sdk`](https://developers.stellar.org/docs/build/smart-contracts), built on OpenZeppelin's [Stellar Contracts](https://docs.openzeppelin.com/stellar-contracts) suite |
+| Smart contracts | Rust + [`soroban-sdk`](https://developers.stellar.org/docs/build/smart-contracts), built on [OpenZeppelin's Stellar contracts](https://www.openzeppelin.com/networks/stellar) |
 | Frontend | Next.js, TypeScript, Tailwind CSS v4 |
-| Indexer *(planned)* | Postgres + GraphQL API, subscribed to Soroban contract events |
-| Wallet | [Freighter](https://www.freighter.app/) / any SEP-10-compatible Stellar wallet |
+| Wallet | [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit) — Freighter, xBull, Albedo, Lobstr, Hana |
+| Backend / Indexer | Rust (Axum) + Postgres — *foundation in progress, see Roadmap* |
+| Content storage | IPFS *(planned, not yet wired up)* |
 
 ---
 
@@ -58,65 +112,19 @@ Design principles, full contract interfaces, and the on-chain/off-chain data pla
 
 ```
 .
-├── contracts/          # Soroban smart contracts (Rust)
-│   ├── profile-registry/
-│   ├── follow-graph/
-│   ├── reputation-registry/
-│   └── post-anchor/
-├── frontend/            # Next.js + TypeScript + Tailwind v4 app
+├── contracts/
+│   ├── profile-registry/    # ✅ Live on testnet
+│   ├── follow-graph/        # ✅ Live on testnet
+│   ├── reputation-registry/ # ⏳ not started
+│   └── post-anchor/         # ⏳ not started
+├── backend/                  # 🟡 foundation in progress — Axum + Postgres indexer
+├── frontend/
+│   ├── app/page.tsx           # Landing page
+│   ├── app/demo/page.tsx      # ✅ Live 3-step demo (connect → register → follow)
+│   └── packages/               # Generated typed contract clients
 ├── docs/
-│   └── weave_technical_spec.md   # Full research + build spec
+│   └── weave_technical_spec.md
 └── README.md
-```
-
-*(Adjust this tree to match your actual folder layout as the repo fills in.)*
-
----
-
-## Contracts
-
-### ProfileRegistry — deployed to Stellar testnet
-
-**Contract ID:** `CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU`
-
-Deployed to Stellar testnet — verify independently via [Stellar Expert](https://stellar.expert/explorer/testnet/contract/CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU) or Soroban RPC at contract ID `CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU`.
-
-#### `register` — create a new profile
-```bash
-stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
-  --source <YOUR_KEY_ALIAS> \
-  --network testnet \
-  -- \
-  register \
-  --owner <YOUR_STELLAR_ADDRESS> \
-  --handle your_handle \
-  --metadata_uri "ipfs://<YOUR_CID>"
-# returns: "1"  (the assigned profile_id)
-```
-
-#### `get_profile` — fetch a profile by ID
-```bash
-stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
-  --source <YOUR_KEY_ALIAS> \
-  --network testnet \
-  -- \
-  get_profile \
-  --profile_id 1
-# returns: {"created_at":...,"follower_count":0,"following_count":0,"handle":"your_handle","metadata_uri":"ipfs://...","owner":"G..."}
-```
-
-#### `resolve_handle` — look up a profile_id by handle (case-insensitive)
-```bash
-stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
-  --source <YOUR_KEY_ALIAS> \
-  --network testnet \
-  -- \
-  resolve_handle \
-  --handle your_handle
-# returns: "1"
 ```
 
 ---
@@ -125,46 +133,62 @@ stellar contract invoke \
 
 ### Prerequisites
 - [Rust](https://www.rust-lang.org/tools/install) + the `wasm32v1-none` target
-- [Stellar CLI](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup) (`stellar contract` commands)
+- [Stellar CLI](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup) v27+
 - Node.js 18+ and npm/pnpm
+- Postgres (for backend work)
 
-### Build & deploy a contract
+### Try the live contracts right now (no local setup needed beyond the CLI)
+
 ```bash
-cd contracts
-stellar keys generate alice --network testnet --fund
-stellar contract build
-stellar contract deploy \
-  --wasm target/wasm32v1-none/release/profile_registry.wasm \
-  --source alice \
-  --network testnet \
-  --alias profile_registry \
-  -- \
-  --admin <ALICE_PUBLIC_KEY>
+stellar contract invoke \
+  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
+  --source <your-key-alias> --network testnet \
+  -- get_profile --profile_id 1
+
+stellar contract invoke \
+  --id CBO2USOJ4MII4GWULU2YGBIAIUN7333SFU5S5R3GKLAP6FGT5DSO5BOR \
+  --source <your-key-alias> --network testnet \
+  -- is_following --follower 1 --followee 2
 ```
 
-### Frontend
+Full invocation examples for every function are in each contract's `DEPLOYMENT.md`.
+
+### Build from source
 ```bash
-cd frontend
-npm install
-npm run dev
+cd contracts/profile-registry && stellar contract build
+cd ../follow-graph && stellar contract build
+cd ../../frontend && npm install && npm run dev   # then visit /demo
+cd ../backend && cargo build
 ```
 
 ---
 
 ## Roadmap
 
-Full phased roadmap in [`docs/weave_technical_spec.md § 13`](./docs/weave_technical_spec.md#13-phased-build-roadmap). Short version:
+Full phased roadmap in [`docs/weave_technical_spec.md § 13`](./docs/weave_technical_spec.md#13-phased-build-roadmap).
 
-- **Phase 0 (now):** repo foundations, `ProfileRegistry` contract, minimal wallet → contract → UI demo loop.
-- **Phase 1:** `FollowGraph`, `PostAnchor`, basic indexer + GraphQL, native-payment tipping in a reference client.
-- **Phase 2:** `ReputationRegistry`, developer SDK, RDF/JSON-LD semantic export.
-- **Phase 3:** selective-disclosure privacy (ZK) research track.
+- **Phase 0 — Foundations:** ✅ done — and exceeded: `ProfileRegistry`, `FollowGraph`, and a
+  full working wallet demo at `/demo` all shipped, not just the "minimal wallet loop"
+  originally scoped.
+- **Phase 1 — MVP:** 🟡 in progress. `ProfileRegistry` ✅, `FollowGraph` ✅, demo ✅,
+  backend/indexer foundation ✅ (Axum + Postgres + `ProfileRegistry` ingestion worker,
+  `GET /profiles/:id` endpoint live).
+  Remaining: `FollowGraph` event ingestion, `PostAnchor` contract, GraphQL read API,
+  native-payment tipping in a reference client.
+- **Phase 2 — Reputation & Composability:** ⏳ not started.
+- **Phase 3 — Privacy (ZK, research-gated):** ⏳ not started.
+
+Open, scoped issues for the current phase are tracked in [GitHub Issues](../../issues) —
+see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for how contributions are scoped and reviewed.
 
 ---
 
 ## Contributing
 
-This project participates in the [Stellar Drips Wave](https://www.drips.network/wave/stellar) program — issues tagged for a Wave cycle are scoped and point-valued for contributors. General contribution guidelines are coming in `CONTRIBUTING.md`; in the meantime, open an issue before starting significant work so effort isn't duplicated.
+This project participates in the [Stellar Drips Wave](https://www.drips.network/wave/stellar)
+program — issues tagged for the current Wave cycle are scoped and point-valued
+(Trivial / Medium / High) for contributors. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) and
+the [open issues](../../issues) to get started.
 
 ---
 
