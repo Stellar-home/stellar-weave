@@ -50,6 +50,19 @@ cp .env.example .env
 # Edit .env if your Postgres URL differs from the default
 ```
 
+**Important — set `START_LEDGER` before first run.**
+The default `START_LEDGER=0` only looks back ~1000 ledgers (~83 minutes). To
+ingest the full history from the `ProfileRegistry` deployment, set it to the
+deployment ledger:
+
+```
+START_LEDGER=3554619
+```
+
+This is the ledger of the `weave_dev` registration transaction — the earliest
+event the contract ever emitted. Setting it here ensures profile 1 and 2 are
+ingested on the first run.
+
 ### 3. Run migrations
 
 ```bash
@@ -75,7 +88,7 @@ The server listens on `http://localhost:3001` by default.
 | `DATABASE_URL` | **required** | Postgres connection string |
 | `SOROBAN_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint |
 | `PROFILE_REGISTRY_CONTRACT_ID` | `CAVUZWNQ...` | ProfileRegistry contract to ingest |
-| `START_LEDGER` | `0` | Ledger to start from on first run. `0` = tip minus 1000 ledgers. |
+| `START_LEDGER` | `0` | Ledger to start from on first run. `0` = tip minus 1000 ledgers (~83 min lookback). **Set to `3554619` to ingest from the ProfileRegistry deployment.** |
 | `POLL_INTERVAL_SECONDS` | `5` | Seconds between RPC polls (matches ledger close time) |
 | `PORT` | `3001` | HTTP server port |
 
@@ -151,6 +164,69 @@ Integration tests (require Postgres with migrations applied):
 ```bash
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/weave \
   cargo test -- --ignored
+```
+
+---
+
+## Troubleshooting
+
+### Profiles not appearing — worker polling the wrong ledger range
+
+If `GET /profiles/1` returns 404 after the worker has been running for a while,
+check where the cursor is:
+
+```bash
+psql $DATABASE_URL -c "SELECT last_ledger FROM ingestion_cursor;"
+```
+
+If `last_ledger` is near the current tip (and much higher than `START_LEDGER`),
+the cursor was already advanced past the historical events before `START_LEDGER`
+was set. Fix: reset the cursor and restart.
+
+```bash
+# 1. Reset the cursor
+psql $DATABASE_URL -c "UPDATE ingestion_cursor SET last_ledger = 0;"
+
+# 2. Make sure .env has START_LEDGER=3554619
+
+# 3. Restart the service
+cargo run
+```
+
+The worker will start from ledger 3554619 on the next run and ingest all
+historical events. This is safe to run multiple times — the
+`ON CONFLICT DO NOTHING` guards on `profiles` and `ingested_events` prevent
+double-ingestion.
+
+### Confirming a successful ingest
+
+After startup you should see log lines like:
+
+```
+INFO backend::ingest: Ingested profile_registered profile_id=1 handle=weave_dev
+INFO backend::ingest: Ingested profile_registered profile_id=2 handle=weave_graph_demo
+INFO backend::ingest: Batch complete events_processed=2
+```
+
+Then verify directly:
+
+```bash
+curl http://localhost:3001/profiles/1
+curl http://localhost:3001/profiles/2
+```
+
+Expected response for profile 1:
+
+```json
+{
+  "profile_id": "1",
+  "handle": "weave_dev",
+  "owner": "GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB",
+  "metadata_uri": "",
+  "created_at_ts": 0,
+  "indexed_at": "...",
+  "updated_at": "..."
+}
 ```
 
 ---
