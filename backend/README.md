@@ -32,7 +32,97 @@ on every read.
 
 ---
 
-## Local setup
+## Delivery guarantees: cursor & idempotency
+
+Read this before assuming anything stronger than what is actually implemented.
+This section describes what the code guarantees today, not what it might do
+later. Every claim below is grounded in a specific code path in `src/`.
+
+### Summary
+
+The ingestion worker provides **at-least-once delivery of events** with
+**idempotent state application** for the events it processes. It does **not**
+provide exactly-once delivery, it does **not** handle chain reorganizations,
+and a single poll can silently drop events beyond the batch cap. Run a single
+worker instance.
+
+### How the cursor works
+
+The cursor is a single row in `ingestion_cursor` (enforced singleton by a
+`CHECK (id = 1)` constraint — see `migrations/0001_init.sql`). It stores
+`last_ledger`, the highest ledger the worker has scanned.
+
+- **Startup** (`src/ingest.rs`, `tick`): read `last_ledger`.
+  - `0` (first run, or after a manual reset) → start from `START_LEDGER` if
+    set, otherwise from `latest − 1000` ledgers (~83 min lookback).
+  - Non-zero → start from `last_ledger + 1`.
+- **After each poll**: the cursor is advanced to `end_ledger` (the chain tip at
+  poll time), even if the polled range contained no events. Empty ranges are
+  never re-scanned.
+- The cursor advance runs in its **own transaction**, separate from the
+  per-event write transaction.
+
+### What is guaranteed
+
+- **Per-event atomic write** (`src/ingest.rs`, `process_event`): inserting the
+  raw event into `ingested_events` and applying the state update
+  (`profiles` insert or `updated_at` bump) happen in a single Postgres
+  transaction. Both commit together or neither does.
+- **Event dedup on replay** (`src/db.rs`, `insert_ingested_event`): a
+  `UNIQUE (tx_hash, event_index)` constraint with `ON CONFLICT DO NOTHING`
+  means re-processing an event that was already ingested returns `false`, and
+  the state update is skipped. So a worker that restarts mid-batch and
+  re-scans the same ledger range will **not** double-apply its state effects.
+- **Profile inserts are safe to replay** (`src/db.rs`, `upsert_profile`):
+  `INSERT ... ON CONFLICT (profile_id) DO NOTHING`. Replaying a
+  `profile_registered` event is a no-op — it does not overwrite the existing
+  row. (Note: `DO NOTHING`, so a re-emitted registration also does not refresh
+  `owner`/`handle`.)
+- **Cursor only moves forward**: once a ledger is scanned, it is never
+  re-scanned unless the cursor is manually reset (see Troubleshooting).
+
+### What is NOT guaranteed
+
+- **Not exactly-once delivery.** The cursor advance and the per-event commits
+  are separate transactions. If the worker crashes after committing some
+  events but before advancing the cursor, it will re-scan that ledger range on
+  restart. De-duplication via `ingested_events` makes the *state* idempotent,
+  but delivery is at-least-once, not exactly-once.
+- **`profile_updated` has no value-level idempotency beyond the event log.**
+  If an event somehow bypasses the `ingested_events` dedup (it should not under
+  normal operation), the `update_profile_metadata` path would bump `updated_at`
+  again. There is no separate guard on the `profiles` update. The event-log
+  dedup is the only protection.
+- **No reorganization (reorg) handling.** The cursor never moves backward. If
+  the Soroban testnet reorganizes a ledger out from under an already-ingested
+  event, the stale row remains in `ingested_events` and the cursor is not
+  rolled back. There is no mechanism to undo state for reverted events.
+- **A single poll can silently drop events past the batch cap.** Each poll
+  requests at most `BATCH_LIMIT = 200` events (`src/ingest.rs` const
+  `BATCH_LIMIT`) across the full range `[start_ledger, end_ledger]` where
+  `end_ledger` is the current chain tip. The RPC returns the first 200; the
+  cursor then advances to `end_ledger`. **Any events beyond the first 200 in
+  that range are never ingested.** Under normal load this never triggers
+  (ProfileRegistry emits a handful of events per ledger). It matters only
+  during a large historical catch-up from a very old `START_LEDGER`; the
+  "Known limitations" note below describes the workaround (`BATCH_LIMIT`).
+  There is no "more pages available" check, so the drop is silent.
+- **No cross-process locking.** The singleton `CHECK` constraint prevents a
+  second cursor *row*, but nothing prevents two worker *processes* from
+  reading the same `last_ledger` concurrently and duplicating work. Dedup will
+  keep the state consistent, but you would waste RPC calls and write
+  contention. Run exactly one worker process per Postgres database.
+
+### Practical implication
+
+For the current single-contract, low-event-volume testnet workload these
+guarantees are sufficient: the worker restarts safely, replays are idempotent,
+and there is no realistic path to duplicate or lost state under normal
+operation. The gaps above (exactly-once, reorgs, batch-cap drop, concurrent
+worker locking) are the places **not** to assume stronger behavior if this
+indexer is ever pointed at higher-volume traffic or multiple workers.
+
+---
 
 ### 1. Start Postgres
 
