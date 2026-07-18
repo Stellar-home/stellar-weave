@@ -35,6 +35,14 @@ Full competitive research and rationale: [`docs/weave_technical_spec.md`](./docs
 
 Run it locally: `cd frontend && npm install && npm run dev`, then visit `/demo`.
 
+> **Demo recording:** a screen capture of the full connect → register → follow flow against
+> testnet is tracked in [#13](https://github.com/Stellar-home/stellar-weave/issues/13) and will
+> be embedded here once available.
+>
+> *The three-step flow in action: connect a Stellar wallet, register a profile with a real
+> `ProfileRegistry.register` transaction, then follow another profile with a real
+> `FollowGraph.follow` transaction — `is_following` and follower count update immediately after.*
+
 ---
 
 ## Deployed Contracts
