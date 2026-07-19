@@ -34,8 +34,13 @@ Live verification:
 1. **`upgrade(new_wasm_hash)` and `version()` functions added** — same pattern as
    ProfileRegistry v2. Admin-authenticated against stored state.
 
-2. **Constructor now takes ProfileRegistry v2 address** — the `contractimport!` in the
-   source is pinned to the v2 ProfileRegistry WASM hash.
+2. **`contractimport!` pins ProfileRegistry v2 by WASM hash** — the import at
+   `follow-graph/src/lib.rs` now includes `sha256 = "dc13986ab487fd4bfe8b9f0ddd38fb681b8302396b836f6be7ce047b7dc2cb94"`.
+   If the ProfileRegistry WASM is rebuilt and the hash changes, FollowGraph will fail
+   to compile until the pin is updated — this is intentional. Without the pin,
+   a stale or wrong WASM would be silently accepted, producing incorrect cross-contract
+   call signatures with no build-time signal. The pin was verified active: building with
+   a wrong hash produces `error: sha256 does not match, expected: dc13986a...`.
 
 3. **`follow_created`/`follow_removed` event payloads unchanged** — they already carried
    full state (follower, followee) in v1. No redesign needed here.

@@ -5,15 +5,20 @@ use soroban_sdk::{BytesN, contract, contracterror, contractimpl, contracttype, A
 // ── Cross-contract import ──────────────────────────────────────────────────────
 // Generates profile_registry::Client, profile_registry::Profile, and
 // profile_registry::Error from the built WASM artifact.
-// The sha256 must match fabb1c738df685c74fb99eef77158bcf9b11c9e16e4f93445362429a1462cff5.
-// If this hash fails at build time it means the WASM has changed — do not bypass
-// the check; investigate and rebuild profile-registry first.
+//
+// The sha256 parameter pins the import to the exact v2 ProfileRegistry WASM
+// (hash dc13986ab487fd4bfe8b9f0ddd38fb681b8302396b836f6be7ce047b7dc2cb94).
+// If this hash fails at build time it means profile_registry.wasm has changed —
+// rebuild profile-registry first, verify its output hash, then update this value.
+//
+// Why this matters: without the pin, soroban_sdk::contractimport! silently accepts
+// any WASM at the given path. A stale/wrong WASM would produce a Client with the
+// wrong function signatures, meaning FollowGraph's cross-contract calls would
+// target the wrong ProfileRegistry behaviour at runtime with no build-time signal.
 mod profile_registry {
-    // Hash pinned to ProfileRegistry v2 WASM.
-    // If this hash fails at build time the v2 profile_registry.wasm has changed —
-    // rebuild profile-registry first, then update this hash.
     soroban_sdk::contractimport!(
-        file = "../target/wasm32v1-none/release/profile_registry.wasm"
+        file = "../target/wasm32v1-none/release/profile_registry.wasm",
+        sha256 = "dc13986ab487fd4bfe8b9f0ddd38fb681b8302396b836f6be7ce047b7dc2cb94"
     );
 }
 

@@ -32,7 +32,7 @@ impl Config {
 
         let profile_registry_contract_id = std::env::var("PROFILE_REGISTRY_CONTRACT_ID")
             .unwrap_or_else(|_| {
-                "CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU".to_string()
+                "CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP".to_string()
             });
 
         let start_ledger: u32 = std::env::var("START_LEDGER")

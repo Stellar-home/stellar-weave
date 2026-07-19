@@ -153,12 +153,12 @@ table live in the [technical spec](./docs/weave_technical_spec.md).
 
 ```bash
 stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
+  --id CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP \
   --source <your-key-alias> --network testnet \
   -- get_profile --profile_id 1
 
 stellar contract invoke \
-  --id CBO2USOJ4MII4GWULU2YGBIAIUN7333SFU5S5R3GKLAP6FGT5DSO5BOR \
+  --id CDNMUIWW6X565R2SWQNUGIQGDNLZA3QPNHO5YDA7YRXAB6PEICQH7ZHS \
   --source <your-key-alias> --network testnet \
   -- is_following --follower 1 --followee 2
 ```
