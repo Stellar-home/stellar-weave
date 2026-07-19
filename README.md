@@ -115,7 +115,7 @@ table live in the [technical spec](./docs/weave_technical_spec.md).
 | Smart contracts | Rust + [`soroban-sdk`](https://developers.stellar.org/docs/build/smart-contracts), built on [OpenZeppelin's Stellar contracts](https://www.openzeppelin.com/networks/stellar) |
 | Frontend | Next.js, TypeScript, Tailwind CSS v4 |
 | Wallet | [Stellar Wallets Kit](https://github.com/Creit-Tech/Stellar-Wallets-Kit) — Freighter, xBull, Albedo, Lobstr, Hana |
-| Backend / Indexer | Rust (Axum) + Postgres — *foundation in progress, see Roadmap* |
+| Backend / Indexer | Rust (Axum) + Postgres — both contracts' core events ingested, REST API live |
 | Content storage | IPFS *(planned, not yet wired up)* |
 
 ---
@@ -129,7 +129,7 @@ table live in the [technical spec](./docs/weave_technical_spec.md).
 │   ├── follow-graph/        # ✅ Live on testnet
 │   ├── reputation-registry/ # ⏳ not started
 │   └── post-anchor/         # ⏳ not started
-├── backend/                  # 🟡 foundation in progress — Axum + Postgres indexer
+├── backend/                  # ✅ Axum + Postgres indexer — ProfileRegistry + FollowGraph events ingested
 ├── frontend/
 │   ├── app/page.tsx           # Landing page
 │   ├── app/demo/page.tsx      # ✅ Live 3-step demo (connect → register → follow)
@@ -183,8 +183,8 @@ Full phased roadmap in [`docs/weave_technical_spec.md § 13`](./docs/weave_techn
   full working wallet demo at `/demo` all shipped, not just the "minimal wallet loop"
   originally scoped.
 - **Phase 1 — MVP:** 🟡 in progress. `ProfileRegistry` ✅, `FollowGraph` ✅, demo ✅,
-  backend/indexer foundation ✅ (Axum + Postgres + `ProfileRegistry` ingestion worker,
-  `GET /profiles/:id` endpoint live).
+  backend/indexer foundation ✅ (Axum + Postgres + `ProfileRegistry` + `FollowGraph` ingestion,
+  `GET /profiles/:id`, `GET /profiles/:id/followers`, `GET /profiles/:id/following` live).
   Remaining: `FollowGraph` event ingestion, `PostAnchor` contract, GraphQL read API,
   native-payment tipping in a reference client.
 - **Phase 2 — Reputation & Composability:** ⏳ not started.

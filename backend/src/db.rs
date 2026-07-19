@@ -138,6 +138,95 @@ pub async fn update_profile_owner(
     Ok(())
 }
 
+// ── follows table ──────────────────────────────────────────────────────────────
+
+/// Row shape returned by `GET /profiles/:id/followers` and `/profiles/:id/following`.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct FollowRow {
+    pub follower_id: BigDecimal,
+    pub followee_id: BigDecimal,
+    pub created_at_ts: i64,
+}
+
+/// Insert a follow edge.
+/// ON CONFLICT DO NOTHING makes this safe to replay — the composite PK enforces
+/// uniqueness; the ingested_events guard provides a second layer at event level.
+pub async fn insert_follow(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    follower_id: &BigDecimal,
+    followee_id: &BigDecimal,
+    created_at_ts: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO follows (follower_id, followee_id, created_at_ts)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (follower_id, followee_id) DO NOTHING
+        "#,
+    )
+    .bind(follower_id)
+    .bind(followee_id)
+    .bind(created_at_ts)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Delete a follow edge (follow_removed). No-op if the edge doesn't exist.
+pub async fn delete_follow(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    follower_id: &BigDecimal,
+    followee_id: &BigDecimal,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        DELETE FROM follows
+        WHERE follower_id = $1 AND followee_id = $2
+        "#,
+    )
+    .bind(follower_id)
+    .bind(followee_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// Return all followers of `profile_id`, ordered by `created_at_ts` ascending.
+pub async fn get_followers(
+    pool: &PgPool,
+    profile_id: &BigDecimal,
+) -> Result<Vec<FollowRow>, sqlx::Error> {
+    sqlx::query_as::<_, FollowRow>(
+        r#"
+        SELECT follower_id, followee_id, created_at_ts
+        FROM follows
+        WHERE followee_id = $1
+        ORDER BY created_at_ts ASC
+        "#,
+    )
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Return all profiles that `profile_id` follows, ordered by `created_at_ts` ascending.
+pub async fn get_following(
+    pool: &PgPool,
+    profile_id: &BigDecimal,
+) -> Result<Vec<FollowRow>, sqlx::Error> {
+    sqlx::query_as::<_, FollowRow>(
+        r#"
+        SELECT follower_id, followee_id, created_at_ts
+        FROM follows
+        WHERE follower_id = $1
+        ORDER BY created_at_ts ASC
+        "#,
+    )
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// Insert a raw event log row.
 /// ON CONFLICT (tx_hash, event_index) DO NOTHING is the baseline idempotency
 /// guard. Returns `true` if the row was newly inserted, `false` if it already

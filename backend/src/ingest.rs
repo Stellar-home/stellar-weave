@@ -34,8 +34,9 @@ use tracing::{debug, error, info, warn};
 use crate::config::Config;
 use crate::db;
 use crate::parse::{
-    EventTopic, decode_profile_id, decode_profile_meta_updated_value,
-    decode_profile_owner_transferred_value, decode_profile_registered_value, decode_topic_name,
+    EventTopic, decode_follow_event_value, decode_profile_id,
+    decode_profile_meta_updated_value, decode_profile_owner_transferred_value,
+    decode_profile_registered_value, decode_topic_name,
 };
 
 /// Maximum events to fetch per RPC call. The server caps this at 10 000;
@@ -104,42 +105,59 @@ async fn tick(rpc: &RpcClient, pool: &PgPool, cfg: &Config) -> Result<usize> {
         return Ok(0);
     }
 
+    let event_start = EventStart::ledger_range(start_ledger, end_ledger)
+        .map_err(|e| anyhow::anyhow!("invalid ledger range: {}", e))?;
+
+    // Poll ProfileRegistry events.
     info!(
         start_ledger,
         end_ledger,
         contract_id = %cfg.profile_registry_contract_id,
-        "Polling for events"
+        "Polling ProfileRegistry events"
     );
-
-    let event_start = EventStart::ledger_range(start_ledger, end_ledger)
-        .map_err(|e| anyhow::anyhow!("invalid ledger range: {}", e))?;
-
-    let resp = rpc
+    let pr_resp = rpc
         .get_events(
-            event_start,
+            event_start.clone(),
             Some(EventType::Contract),
             std::slice::from_ref(&cfg.profile_registry_contract_id),
-            &[], // no topic filter — we inspect topic[0] ourselves
+            &[],
             Some(BATCH_LIMIT),
         )
         .await
-        .context("getEvents RPC call failed")?;
+        .context("getEvents RPC call failed (ProfileRegistry)")?;
 
-    let events = resp.events;
-    let event_count = events.len();
+    // Poll FollowGraph events.
     info!(
         start_ledger,
-        end_ledger, event_count, "Received events from RPC"
+        end_ledger,
+        contract_id = %cfg.follow_graph_contract_id,
+        "Polling FollowGraph events"
     );
+    let fg_resp = rpc
+        .get_events(
+            event_start,
+            Some(EventType::Contract),
+            std::slice::from_ref(&cfg.follow_graph_contract_id),
+            &[],
+            Some(BATCH_LIMIT),
+        )
+        .await
+        .context("getEvents RPC call failed (FollowGraph)")?;
+
+    let all_events: Vec<_> = pr_resp
+        .events
+        .into_iter()
+        .chain(fg_resp.events.into_iter())
+        .collect();
+
+    let event_count = all_events.len();
+    info!(start_ledger, end_ledger, event_count, "Received events from RPC");
 
     let mut processed = 0usize;
 
-    for event in &events {
-        if event.topic.len() < 2 {
-            warn!(
-                event_id = %event.id,
-                "Event has fewer than 2 topics — skipping"
-            );
+    for event in &all_events {
+        if event.topic.is_empty() {
+            warn!(event_id = %event.id, "Event has no topics — skipping");
             continue;
         }
 
@@ -155,6 +173,8 @@ async fn tick(rpc: &RpcClient, pool: &PgPool, cfg: &Config) -> Result<usize> {
             EventTopic::ProfileRegistered => "profile_registered",
             EventTopic::ProfileMetaUpdated => "profile_meta_updated",
             EventTopic::ProfileOwnerTransferred => "profile_owner_xfrd",
+            EventTopic::FollowCreated => "follow_created",
+            EventTopic::FollowRemoved => "follow_removed",
             EventTopic::Unknown(name) => {
                 debug!(name, event_id = %event.id, "Unknown event topic — skipping");
                 continue;
@@ -229,10 +249,6 @@ async fn process_event(
     ledger: i64,
     raw_data: &serde_json::Value,
 ) -> Result<()> {
-    let profile_id_raw =
-        decode_profile_id(&topics[1]).context("failed to decode profile_id from topic[1]")?;
-    let profile_id = u128_to_bigdecimal(profile_id_raw);
-
     let mut db_tx = pool.begin().await?;
 
     // Insert the raw event record. Returns false if this event was already seen
@@ -259,52 +275,96 @@ async fn process_event(
     }
 
     match topic_name {
-        EventTopic::ProfileRegistered => {
-            let (owner, handle) = decode_profile_registered_value(value_b64)
-                .context("failed to decode profile_registered value")?;
+        // ── ProfileRegistry events ── topic[1] carries profile_id ─────────────
+        EventTopic::ProfileRegistered
+        | EventTopic::ProfileMetaUpdated
+        | EventTopic::ProfileOwnerTransferred => {
+            let profile_id_raw = decode_profile_id(
+                topics.get(1).context("profile event missing topic[1]")?,
+            )
+            .context("failed to decode profile_id from topic[1]")?;
+            let profile_id = u128_to_bigdecimal(profile_id_raw);
 
-            // `created_at` is in contract storage but not in the event payload.
-            // Store 0 as sentinel; ledger timestamp is a reasonable proxy.
-            db::upsert_profile(&mut db_tx, &profile_id, &owner, &handle, "", 0).await?;
+            match topic_name {
+                EventTopic::ProfileRegistered => {
+                    let (owner, handle) = decode_profile_registered_value(value_b64)
+                        .context("failed to decode profile_registered value")?;
+
+                    // `created_at` is in contract storage but not in the event payload.
+                    // Store 0 as sentinel; ledger timestamp is a reasonable proxy.
+                    db::upsert_profile(&mut db_tx, &profile_id, &owner, &handle, "", 0).await?;
+
+                    info!(
+                        profile_id = profile_id_raw,
+                        owner = %owner,
+                        handle = %handle,
+                        ledger,
+                        "Ingested profile_registered"
+                    );
+                }
+
+                EventTopic::ProfileMetaUpdated => {
+                    let new_uri = decode_profile_meta_updated_value(value_b64)
+                        .context("failed to decode profile_meta_updated value")?;
+
+                    db::update_profile_metadata(&mut db_tx, &profile_id, &new_uri).await?;
+
+                    info!(
+                        profile_id = profile_id_raw,
+                        new_uri = %new_uri,
+                        ledger,
+                        "Ingested profile_meta_updated"
+                    );
+                }
+
+                EventTopic::ProfileOwnerTransferred => {
+                    let new_owner = decode_profile_owner_transferred_value(value_b64)
+                        .context("failed to decode profile_owner_xfrd value")?;
+
+                    db::update_profile_owner(&mut db_tx, &profile_id, &new_owner).await?;
+
+                    info!(
+                        profile_id = profile_id_raw,
+                        new_owner = %new_owner,
+                        ledger,
+                        "Ingested profile_owner_xfrd"
+                    );
+                }
+
+                _ => unreachable!(),
+            }
+        }
+
+        // ── FollowGraph events ── both IDs are in the value payload ────────────
+        EventTopic::FollowCreated => {
+            let (follower_raw, followee_raw) = decode_follow_event_value(value_b64)
+                .context("failed to decode follow_created value")?;
+            let follower_id = u128_to_bigdecimal(follower_raw);
+            let followee_id = u128_to_bigdecimal(followee_raw);
+
+            db::insert_follow(&mut db_tx, &follower_id, &followee_id, ledger).await?;
 
             info!(
-                profile_id = profile_id_raw,
-                owner = %owner,
-                handle = %handle,
+                follower = follower_raw,
+                followee = followee_raw,
                 ledger,
-                "Ingested profile_registered"
+                "Ingested follow_created"
             );
         }
 
-        // v2: profile_meta_updated carries the new metadata_uri directly —
-        // no follow-up RPC call needed. This replaces the old profile_updated
-        // workaround that only bumped updated_at and left metadata_uri stale.
-        EventTopic::ProfileMetaUpdated => {
-            let new_uri = decode_profile_meta_updated_value(value_b64)
-                .context("failed to decode profile_meta_updated value")?;
+        EventTopic::FollowRemoved => {
+            let (follower_raw, followee_raw) = decode_follow_event_value(value_b64)
+                .context("failed to decode follow_removed value")?;
+            let follower_id = u128_to_bigdecimal(follower_raw);
+            let followee_id = u128_to_bigdecimal(followee_raw);
 
-            db::update_profile_metadata(&mut db_tx, &profile_id, &new_uri).await?;
-
-            info!(
-                profile_id = profile_id_raw,
-                new_uri = %new_uri,
-                ledger,
-                "Ingested profile_meta_updated"
-            );
-        }
-
-        // v2: profile_owner_xfrd carries the new owner address directly.
-        EventTopic::ProfileOwnerTransferred => {
-            let new_owner = decode_profile_owner_transferred_value(value_b64)
-                .context("failed to decode profile_owner_xfrd value")?;
-
-            db::update_profile_owner(&mut db_tx, &profile_id, &new_owner).await?;
+            db::delete_follow(&mut db_tx, &follower_id, &followee_id).await?;
 
             info!(
-                profile_id = profile_id_raw,
-                new_owner = %new_owner,
+                follower = follower_raw,
+                followee = followee_raw,
                 ledger,
-                "Ingested profile_owner_xfrd"
+                "Ingested follow_removed"
             );
         }
 

@@ -28,6 +28,8 @@ pub fn router(pool: Arc<PgPool>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/profiles/{profile_id}", get(get_profile))
+        .route("/profiles/{profile_id}/followers", get(get_followers))
+        .route("/profiles/{profile_id}/following", get(get_following))
         .with_state(pool)
 }
 
@@ -66,6 +68,71 @@ async fn get_profile(
             .into_response(),
         Err(e) => {
             error!(error = %e, profile_id = %profile_id_str, "Database error in get_profile");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal server error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// `GET /profiles/:profile_id/followers`
+///
+/// Returns all profiles that follow `profile_id`, ordered oldest-first.
+/// Returns `[]` (not 404) when the profile has no followers — zero followers
+/// is a valid state, not a missing resource.
+async fn get_followers(
+    State(pool): State<AppState>,
+    Path(profile_id_str): Path<String>,
+) -> impl IntoResponse {
+    let profile_id: bigdecimal::BigDecimal = match profile_id_str.trim().parse() {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "profile_id must be a non-negative integer"})),
+            )
+                .into_response();
+        }
+    };
+
+    match db::get_followers(&pool, &profile_id).await {
+        Ok(rows) => (StatusCode::OK, Json(json!(rows))).into_response(),
+        Err(e) => {
+            error!(error = %e, profile_id = %profile_id_str, "Database error in get_followers");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal server error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// `GET /profiles/:profile_id/following`
+///
+/// Returns all profiles that `profile_id` follows, ordered oldest-first.
+/// Returns `[]` (not 404) when the profile follows nobody.
+async fn get_following(
+    State(pool): State<AppState>,
+    Path(profile_id_str): Path<String>,
+) -> impl IntoResponse {
+    let profile_id: bigdecimal::BigDecimal = match profile_id_str.trim().parse() {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "profile_id must be a non-negative integer"})),
+            )
+                .into_response();
+        }
+    };
+
+    match db::get_following(&pool, &profile_id).await {
+        Ok(rows) => (StatusCode::OK, Json(json!(rows))).into_response(),
+        Err(e) => {
+            error!(error = %e, profile_id = %profile_id_str, "Database error in get_following");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "internal server error"})),
@@ -193,5 +260,121 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// /followers returns [] (not 404) for a profile with no followers.
+    #[tokio::test]
+    #[ignore = "requires Postgres: set DATABASE_URL and run sqlx migrate run first"]
+    async fn test_get_followers_empty_returns_200_not_404() {
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set for this integration test");
+        let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let app = router(Arc::new(pool));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/profiles/99998/followers")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json, serde_json::json!([]));
+    }
+
+    /// /following returns [] (not 404) for a profile that follows nobody.
+    #[tokio::test]
+    #[ignore = "requires Postgres: set DATABASE_URL and run sqlx migrate run first"]
+    async fn test_get_following_empty_returns_200_not_404() {
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set for this integration test");
+        let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let app = router(Arc::new(pool));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/profiles/99998/following")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json, serde_json::json!([]));
+    }
+
+    /// Full follow round-trip: insert a follow row, verify it appears in /followers,
+    /// then verify the follower appears in /following of the opposite side.
+    #[tokio::test]
+    #[ignore = "requires Postgres: set DATABASE_URL and run sqlx migrate run first"]
+    async fn test_follow_roundtrip_via_endpoints() {
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set for this integration test");
+        let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let follower_id: bigdecimal::BigDecimal = "77771".parse().unwrap();
+        let followee_id: bigdecimal::BigDecimal = "77772".parse().unwrap();
+
+        // Clean up any leftover state from a previous run.
+        sqlx::query("DELETE FROM follows WHERE follower_id = $1 AND followee_id = $2")
+            .bind(&follower_id)
+            .bind(&followee_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Insert directly into follows (simulating what the ingest worker does).
+        let mut tx = pool.begin().await.unwrap();
+        crate::db::insert_follow(&mut tx, &follower_id, &followee_id, 1_700_000_001i64)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let app = router(Arc::new(pool.clone()));
+
+        // followee's /followers should contain follower_id.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/profiles/77772/followers")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.as_array().unwrap().iter().any(|r| {
+            r["follower_id"].as_str().map(|s| s == "77771").unwrap_or(false)
+        }));
+
+        // follower's /following should contain followee_id.
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/profiles/77771/following")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.as_array().unwrap().iter().any(|r| {
+            r["followee_id"].as_str().map(|s| s == "77772").unwrap_or(false)
+        }));
     }
 }

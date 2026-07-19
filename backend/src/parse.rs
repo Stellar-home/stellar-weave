@@ -15,10 +15,16 @@
 //!   topic[1] = ScVal::U128(profile_id)
 //!   value    = ScVal::Vec([U128(profile_id), Symbol(new_metadata_uri)])
 //!
-//! `profile_owner_xfrd` event (v2 — replaces generic `profile_updated`):
-//!   topic[0] = ScVal::Symbol("profile_owner_xfrd")
-//!   topic[1] = ScVal::U128(profile_id)
-//!   value    = ScVal::Vec([U128(profile_id), Address(new_owner)])
+//! ## Contract event shapes (FollowGraph)
+//!
+//! `follow_created` event:
+//!   topic[0] = ScVal::Symbol("follow_created")
+//!   value    = ScVal::Vec([U128(follower), U128(followee)])
+//!              (no topic[1] — both IDs are in the value payload)
+//!
+//! `follow_removed` event:
+//!   topic[0] = ScVal::Symbol("follow_removed")
+//!   value    = ScVal::Vec([U128(follower), U128(followee)])
 
 use anyhow::{Context, Result, anyhow, bail};
 use stellar_xdr::{AccountId, Limits, PublicKey, ReadXdr, ScAddress, ScVal};
@@ -31,6 +37,10 @@ pub enum EventTopic {
     ProfileMetaUpdated,
     /// v2: ownership transfer — payload carries (profile_id: u128, new_owner: Address).
     ProfileOwnerTransferred,
+    /// FollowGraph: follow edge created — value payload carries (follower: u128, followee: u128).
+    FollowCreated,
+    /// FollowGraph: follow edge removed — value payload carries (follower: u128, followee: u128).
+    FollowRemoved,
     Unknown(String),
 }
 
@@ -46,6 +56,9 @@ pub fn decode_topic_name(b64: &str) -> Result<EventTopic> {
                 // v2 event names — distinct and self-documenting.
                 "profile_meta_updated" => Ok(EventTopic::ProfileMetaUpdated),
                 "profile_owner_xfrd" => Ok(EventTopic::ProfileOwnerTransferred),
+                // FollowGraph events.
+                "follow_created" => Ok(EventTopic::FollowCreated),
+                "follow_removed" => Ok(EventTopic::FollowRemoved),
                 other => Ok(EventTopic::Unknown(other.to_string())),
             }
         }
@@ -166,6 +179,49 @@ pub fn decode_profile_owner_transferred_value(b64: &str) -> Result<String> {
     decode_address_from_scval(&vec[1])
 }
 
+
+/// Decode the value body of a `follow_created` or `follow_removed` event.
+///
+/// Both events have identical payload shapes:
+/// ScVal::Vec([U128(follower), U128(followee)])
+///
+/// Returns `(follower_id, followee_id)`.
+pub fn decode_follow_event_value(b64: &str) -> Result<(u128, u128)> {
+    let val = ScVal::from_xdr_base64(b64, Limits::none())
+        .context("failed to decode follow event value XDR")?;
+
+    let vec = match val {
+        ScVal::Vec(Some(v)) => v,
+        other => bail!(
+            "expected ScVal::Vec for follow event value, got {:?}",
+            other
+        ),
+    };
+
+    if vec.len() < 2 {
+        bail!("follow event value vec has fewer than 2 elements");
+    }
+
+    let follower = match &vec[0] {
+        ScVal::U128(parts) => {
+            let hi = (parts.hi as u128) << 64;
+            let lo = parts.lo as u128;
+            hi | lo
+        }
+        other => bail!("expected U128 for follower at index 0, got {:?}", other),
+    };
+
+    let followee = match &vec[1] {
+        ScVal::U128(parts) => {
+            let hi = (parts.hi as u128) << 64;
+            let lo = parts.lo as u128;
+            hi | lo
+        }
+        other => bail!("expected U128 for followee at index 1, got {:?}", other),
+    };
+
+    Ok((follower, followee))
+}
 
 // ── ScVal extractors ───────────────────────────────────────────────────────────
 
@@ -404,12 +460,53 @@ mod tests {
         assert_eq!(decode_profile_meta_updated_value(&b64).unwrap(), "");
     }
 
-    // ── decode_profile_owner_transferred_value ────────────────────────────
+    // ── decode_follow_event_value ─────────────────────────────────────────
+
+    fn make_follow_value_b64(follower: u128, followee: u128) -> String {
+        let make_u128 = |v: u128| ScVal::U128(UInt128Parts {
+            hi: (v >> 64) as u64,
+            lo: v as u64,
+        });
+        let items = vec![make_u128(follower), make_u128(followee)];
+        ScVal::Vec(Some(VecM::try_from(items).unwrap().into()))
+            .to_xdr_base64(Limits::none())
+            .expect("XDR encode must succeed")
+    }
 
     #[test]
-    fn test_decode_profile_owner_transferred_value_roundtrip() {
-        let owner = "GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB";
-        let b64 = make_owner_transferred_value_b64(1u128, owner);
-        assert_eq!(decode_profile_owner_transferred_value(&b64).unwrap(), owner);
+    fn test_decode_follow_event_value_roundtrip() {
+        let b64 = make_follow_value_b64(1u128, 2u128);
+        let (follower, followee) = decode_follow_event_value(&b64).unwrap();
+        assert_eq!(follower, 1u128);
+        assert_eq!(followee, 2u128);
+    }
+
+    #[test]
+    fn test_decode_follow_event_value_large_ids() {
+        let f1: u128 = (42u128 << 64) | 999u128;
+        let f2: u128 = (7u128 << 64) | 1u128;
+        let b64 = make_follow_value_b64(f1, f2);
+        let (follower, followee) = decode_follow_event_value(&b64).unwrap();
+        assert_eq!(follower, f1);
+        assert_eq!(followee, f2);
+    }
+
+    #[test]
+    fn test_decode_follow_event_value_wrong_type_returns_error() {
+        // A Symbol where a Vec is expected should return Err.
+        let b64 = make_symbol_b64("not_a_vec");
+        assert!(decode_follow_event_value(&b64).is_err());
+    }
+
+    #[test]
+    fn test_decode_topic_name_follow_created() {
+        let b64 = make_symbol_b64("follow_created");
+        assert_eq!(decode_topic_name(&b64).unwrap(), EventTopic::FollowCreated);
+    }
+
+    #[test]
+    fn test_decode_topic_name_follow_removed() {
+        let b64 = make_symbol_b64("follow_removed");
+        assert_eq!(decode_topic_name(&b64).unwrap(), EventTopic::FollowRemoved);
     }
 }

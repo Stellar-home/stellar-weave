@@ -11,6 +11,7 @@ pub struct Config {
     pub database_url: String,
     pub soroban_rpc_url: String,
     pub profile_registry_contract_id: String,
+    pub follow_graph_contract_id: String,
     /// Ledger to start ingestion from on the very first run (cursor = 0).
     /// Set to 0 to use the contract's deployment ledger (worker will detect
     /// "start from beginning" and fetch the latest ledger minus a small buffer).
@@ -35,6 +36,11 @@ impl Config {
                 "CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP".to_string()
             });
 
+        let follow_graph_contract_id = std::env::var("FOLLOW_GRAPH_CONTRACT_ID")
+            .unwrap_or_else(|_| {
+                "CDNMUIWW6X565R2SWQNUGIQGDNLZA3QPNHO5YDA7YRXAB6PEICQH7ZHS".to_string()
+            });
+
         let start_ledger: u32 = std::env::var("START_LEDGER")
             .unwrap_or_else(|_| "0".to_string())
             .parse()
@@ -54,6 +60,7 @@ impl Config {
             database_url,
             soroban_rpc_url,
             profile_registry_contract_id,
+            follow_graph_contract_id,
             start_ledger,
             poll_interval_seconds,
             port,

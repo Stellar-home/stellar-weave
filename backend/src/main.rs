@@ -41,7 +41,8 @@ async fn main() -> anyhow::Result<()> {
     let cfg = Config::from_env()?;
     info!(
         rpc_url = %cfg.soroban_rpc_url,
-        contract_id = %cfg.profile_registry_contract_id,
+        profile_registry_id = %cfg.profile_registry_contract_id,
+        follow_graph_id = %cfg.follow_graph_contract_id,
         poll_interval_s = cfg.poll_interval_seconds,
         start_ledger = cfg.start_ledger,
         "Weave backend starting"
