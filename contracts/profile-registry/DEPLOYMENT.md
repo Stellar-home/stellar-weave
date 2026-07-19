@@ -7,17 +7,24 @@
 
 | Field | Value |
 |---|---|
-| **Contract ID** | `REPLACE_AFTER_DEPLOY` |
+| **Contract ID** | `CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP` |
 | **Network** | Stellar Testnet (`Test SDF Network ; September 2015`) |
 | **Deployed by** | `GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB` (alias: `alice`) |
 | **Admin address** | `GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB` |
-| **Deployed at** | TBD |
-| **WASM hash** | `REPLACE_AFTER_UPLOAD` |
+| **Deployed at** | 2026-07-19 |
+| **WASM hash** | `dc13986ab487fd4bfe8b9f0ddd38fb681b8302396b836f6be7ce047b7dc2cb94` |
 | **soroban-sdk version** | `26.1.0` |
 | **stellar-cli version** | `27.0.0` |
 
-Verify independently once deployed:
-- https://stellar.expert/explorer/testnet/contract/REPLACE_AFTER_DEPLOY
+Verify independently:
+- [Stellar Expert](https://stellar.expert/explorer/testnet/contract/CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP)
+- [Stellar Lab](https://lab.stellar.org/r/testnet/contract/CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP)
+
+Deployment transactions:
+- WASM upload + deploy: [`6cdd8a4666707f74700e60b8ed96574c191df062ef20217da4fe852d09125a17`](https://stellar.expert/explorer/testnet/tx/6cdd8a4666707f74700e60b8ed96574c191df062ef20217da4fe852d09125a17)
+- Contract deploy: [`ece3a80bc7e3d5adb64cf1277d1a2430686047b51447d57209d34a018fbc2e17`](https://stellar.expert/explorer/testnet/tx/ece3a80bc7e3d5adb64cf1277d1a2430686047b51447d57209d34a018fbc2e17)
+- `weave_dev` profile registered (profile_id 1): [`68d6c85d81ea72e2040cb561356226bcc6e75e7e870734f20609792366509fbf`](https://stellar.expert/explorer/testnet/tx/68d6c85d81ea72e2040cb561356226bcc6e75e7e870734f20609792366509fbf)
+- `weave_graph_demo` profile registered (profile_id 2): [`1a4e099dd35b4c58742b4f3177c58499c2e135bc7ce5ee0c3f119ac683154c0b`](https://stellar.expert/explorer/testnet/tx/1a4e099dd35b4c58742b4f3177c58499c2e135bc7ce5ee0c3f119ac683154c0b)
 
 ---
 
@@ -84,19 +91,14 @@ stellar contract invoke \
 
 ## Post-Deploy: Update Downstream Config
 
-After recording the new contract ID:
-
-1. `backend/.env` and `backend/.env.example` — set `PROFILE_REGISTRY_CONTRACT_ID`
-2. `frontend/.env.local` — set `NEXT_PUBLIC_PROFILE_REGISTRY_ID`
-3. Regenerate typed client:
-   ```bash
-   stellar contract bindings typescript \
-     --contract-id <NEW_CONTRACT_ID> \
-     --network testnet \
-     --output-dir frontend/packages/profile-registry-client \
-     --overwrite
-   ```
-4. Update README "Deployed Contracts" table.
+Contract IDs are now live. Regenerate typed client:
+```bash
+stellar contract bindings typescript \
+  --contract-id CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP \
+  --network testnet \
+  --output-dir frontend/packages/profile-registry-client \
+  --overwrite
+```
 
 ---
 

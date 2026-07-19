@@ -7,7 +7,7 @@ export * as rpc from "@stellar/stellar-sdk/rpc";
 export declare const networks: {
     readonly testnet: {
         readonly networkPassphrase: "Test SDF Network ; September 2015";
-        readonly contractId: "CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU";
+        readonly contractId: "CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP";
     };
 };
 export declare const Errors: {
@@ -43,19 +43,17 @@ export type DataKey = {
     tag: "Handle";
     values: readonly [string];
 };
+/**
+ * v2: `follower_count` and `following_count` removed entirely.
+ * Real counts are owned by FollowGraph (see contracts/follow-graph).
+ * Removing them eliminates the permanently-zero vestigial fields that existed
+ * in v1 and caused the README ⚠️ warning to be necessary.
+ */
 export interface Profile {
     /**
    * Ledger timestamp at registration.
    */
     created_at: u64;
-    /**
-   * Reserved for FollowGraph — always 0 in this contract.
-   */
-    follower_count: u32;
-    /**
-   * Reserved for FollowGraph — always 0 in this contract.
-   */
-    following_count: u32;
     /**
    * Normalized (lowercase) handle stored as Symbol.
    */
@@ -68,10 +66,32 @@ export interface Profile {
 }
 export interface Client {
     /**
-     * Construct and simulate a register transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-     * Register a new profile. Returns the assigned `profile_id` (starts at 1).
+     * Construct and simulate a upgrade transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+     * Upgrade the contract Wasm to `new_wasm_hash`.
      *
-     * Requires the `owner` address to have authorized this call.
+     * Auth is required from the admin address stored in *contract state*, not
+     * from any caller-supplied parameter. This is deliberate: trusting a
+     * caller-supplied "admin" argument instead of loading from storage is a
+     * documented Soroban exploit pattern — an attacker could supply their own
+     * address and bypass the check. We always load from storage.
+     *
+     * The new Wasm must already be uploaded to the ledger before calling this.
+     */
+    upgrade: ({ new_wasm_hash }: {
+        new_wasm_hash: Buffer;
+    }, options?: MethodOptions) => Promise<AssembledTransaction<null>>;
+    /**
+     * Construct and simulate a version transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+     * Returns the contract version. This deployment is v2.
+     *
+     * Security note: the admin key can upgrade this contract's Wasm bytecode.
+     * This is a centralization point — document as a candidate for multisig/
+     * timelock control before any mainnet deployment.
+     */
+    version: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>;
+    /**
+     * Construct and simulate a register transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+     * Register a new profile. Returns the assigned profile_id (starts at 1).
      */
     register: ({ owner, handle, metadata_uri }: {
         owner: string;
@@ -80,28 +100,22 @@ export interface Client {
     }, options?: MethodOptions) => Promise<AssembledTransaction<Result<u128>>>;
     /**
      * Construct and simulate a get_profile transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-     * Return the profile for a given `profile_id`.
-     *
-     * No authentication required — permissionless read.
      */
     get_profile: ({ profile_id }: {
         profile_id: u128;
     }, options?: MethodOptions) => Promise<AssembledTransaction<Result<Profile>>>;
     /**
      * Construct and simulate a resolve_handle transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-     * Return the `profile_id` for a registered handle.
-     *
-     * The `handle` input is normalized before lookup — case-insensitive.
-     * No authentication required — permissionless read.
      */
     resolve_handle: ({ handle }: {
         handle: string;
     }, options?: MethodOptions) => Promise<AssembledTransaction<Result<u128>>>;
     /**
      * Construct and simulate a update_metadata transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-     * Update the `metadata_uri` of an existing profile.
+     * Update the metadata_uri of an existing profile.
      *
-     * Requires auth from the profile's stored owner (not an arbitrary caller).
+     * v2: event is now `profile_metadata_updated` and carries the new value
+     * directly, so an indexer does not need a follow-up get_profile call.
      */
     update_metadata: ({ profile_id, metadata_uri }: {
         profile_id: u128;
@@ -109,9 +123,10 @@ export interface Client {
     }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>;
     /**
      * Construct and simulate a transfer_ownership transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-     * Transfer ownership of a profile to `new_owner`.
+     * Transfer ownership of a profile to new_owner.
      *
-     * Requires auth from the profile's current stored owner.
+     * v2: event is now `profile_owner_transferred` and carries the new owner
+     * address directly, so an indexer does not need a follow-up get_profile call.
      */
     transfer_ownership: ({ profile_id, new_owner }: {
         profile_id: u128;
@@ -136,6 +151,8 @@ export declare class Client extends ContractClient {
     }): Promise<AssembledTransaction<T>>;
     constructor(options: ContractClientOptions);
     readonly fromJSON: {
+        upgrade: (json: string) => AssembledTransaction<null>;
+        version: (json: string) => AssembledTransaction<number>;
         register: (json: string) => AssembledTransaction<Result<bigint, import("@stellar/stellar-sdk/contract").ErrorMessage>>;
         get_profile: (json: string) => AssembledTransaction<Result<Profile, import("@stellar/stellar-sdk/contract").ErrorMessage>>;
         resolve_handle: (json: string) => AssembledTransaction<Result<bigint, import("@stellar/stellar-sdk/contract").ErrorMessage>>;

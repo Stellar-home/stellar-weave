@@ -7,7 +7,7 @@ export * as rpc from "@stellar/stellar-sdk/rpc";
 export declare const networks: {
     readonly testnet: {
         readonly networkPassphrase: "Test SDF Network ; September 2015";
-        readonly contractId: "CBO2USOJ4MII4GWULU2YGBIAIUN7333SFU5S5R3GKLAP6FGT5DSO5BOR";
+        readonly contractId: "CDNMUIWW6X565R2SWQNUGIQGDNLZA3QPNHO5YDA7YRXAB6PEICQH7ZHS";
     };
 };
 export declare const Errors: {
@@ -101,6 +101,22 @@ export interface Client {
         followee: u128;
     }, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>;
     /**
+     * Construct and simulate a upgrade transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+     * Upgrade the contract Wasm to `new_wasm_hash`.
+     *
+     * Auth is required from the admin address stored in *contract state*, not
+     * from any caller-supplied parameter — same security pattern as
+     * ProfileRegistry.upgrade(). See that contract's comments for full rationale.
+     */
+    upgrade: ({ new_wasm_hash }: {
+        new_wasm_hash: Buffer;
+    }, options?: MethodOptions) => Promise<AssembledTransaction<null>>;
+    /**
+     * Construct and simulate a version transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+     * Returns the contract version. This deployment is v2.
+     */
+    version: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>;
+    /**
      * Construct and simulate a unfollow transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
      * Remove a directed follow edge from `follower` to `followee`.
      *
@@ -183,6 +199,8 @@ export declare class Client extends ContractClient {
     constructor(options: ContractClientOptions);
     readonly fromJSON: {
         follow: (json: string) => AssembledTransaction<Result<void, import("@stellar/stellar-sdk/contract").ErrorMessage>>;
+        upgrade: (json: string) => AssembledTransaction<null>;
+        version: (json: string) => AssembledTransaction<number>;
         unfollow: (json: string) => AssembledTransaction<Result<void, import("@stellar/stellar-sdk/contract").ErrorMessage>>;
         is_following: (json: string) => AssembledTransaction<boolean>;
         get_followers: (json: string) => AssembledTransaction<Result<bigint[], import("@stellar/stellar-sdk/contract").ErrorMessage>>;

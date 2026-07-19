@@ -41,8 +41,8 @@ Run it locally: `cd frontend && npm install && npm run dev`, then visit `/demo`.
 
 | Contract | Status | Testnet Contract ID | Docs |
 |---|---|---|---|
-| `ProfileRegistry` | ✅ Live v2 — 6 public functions | deploy in progress — see [`DEPLOYMENT.md`](./contracts/profile-registry/DEPLOYMENT.md) | [`contracts/profile-registry/DEPLOYMENT.md`](./contracts/profile-registry/DEPLOYMENT.md) |
-| `FollowGraph` | ✅ Live v2 | deploy in progress — see [`DEPLOYMENT.md`](./contracts/follow-graph/DEPLOYMENT.md) | [`contracts/follow-graph/DEPLOYMENT.md`](./contracts/follow-graph/DEPLOYMENT.md) |
+| `ProfileRegistry` | ✅ Live v2 — 8 public functions | [`CCMV3J6W...POKKP`](https://stellar.expert/explorer/testnet/contract/CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP) | [`contracts/profile-registry/DEPLOYMENT.md`](./contracts/profile-registry/DEPLOYMENT.md) |
+| `FollowGraph` | ✅ Live v2 | [`CDNMUIWW...H7ZHS`](https://stellar.expert/explorer/testnet/contract/CDNMUIWW6X565R2SWQNUGIQGDNLZA3QPNHO5YDA7YRXAB6PEICQH7ZHS) | [`contracts/follow-graph/DEPLOYMENT.md`](./contracts/follow-graph/DEPLOYMENT.md) |
 | `ReputationRegistry` | ⏳ Not started | — | — |
 | `PostAnchor` | ⏳ Not started | — | — |
 

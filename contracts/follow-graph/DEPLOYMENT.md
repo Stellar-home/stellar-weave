@@ -7,15 +7,25 @@
 
 | Field | Value |
 |---|---|
-| **Contract ID** | `REPLACE_AFTER_DEPLOY` |
+| **Contract ID** | `CDNMUIWW6X565R2SWQNUGIQGDNLZA3QPNHO5YDA7YRXAB6PEICQH7ZHS` |
 | **Network** | Stellar Testnet (`Test SDF Network ; September 2015`) |
 | **Deployed by** | `GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB` (alias: `alice`) |
 | **Admin** | `GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB` |
-| **Deployed at** | TBD |
-| **WASM hash** | `REPLACE_AFTER_UPLOAD` |
-| **ProfileRegistry v2 dependency** | `REPLACE_WITH_V2_PROFILE_REGISTRY_CONTRACT_ID` |
+| **Deployed at** | 2026-07-19 |
+| **WASM hash** | `d8c2a13557c1b66a2b67c81747b5e38ef04891f06fee22fe712bf85b8e391240` |
+| **ProfileRegistry v2 dependency** | `CCMV3J6W52JIZJVVX2YYBEALROVROU7KTDBLVSUYYMTLDTFJHXXPOKKP` |
 | **soroban-sdk** | `26.1.0` |
 | **Stellar CLI** | `27.0.0` |
+
+Deployment transactions:
+- WASM upload: [`4c3b5761b8ea25025577ff992d87ee63e7a4de7352edb822dfe2388fd7ad3be5`](https://stellar.expert/explorer/testnet/tx/4c3b5761b8ea25025577ff992d87ee63e7a4de7352edb822dfe2388fd7ad3be5)
+- Contract deploy: [`746c713c9dfdec95beaf27f570c7e20b27779b9a75ce57a73ae0c30a3d6ed24b`](https://stellar.expert/explorer/testnet/tx/746c713c9dfdec95beaf27f570c7e20b27779b9a75ce57a73ae0c30a3d6ed24b)
+- Demo follow (profile 1 → profile 2): [`5d0719b840652143647482972f1ea504364c0c3a861013ed2f68be300d711fca`](https://stellar.expert/explorer/testnet/tx/5d0719b840652143647482972f1ea504364c0c3a861013ed2f68be300d711fca)
+
+Live verification:
+- `is_following(1, 2)` → `true` ✅
+- `get_follower_count(2)` → `1` ✅
+- `version()` → `2` ✅
 
 ---
 
@@ -85,16 +95,14 @@ stellar contract invoke \
 
 ## Post-Deploy: Update Downstream Config
 
-1. `frontend/.env.local` — set `NEXT_PUBLIC_FOLLOW_GRAPH_ID`
-2. Regenerate typed client:
-   ```bash
-   stellar contract bindings typescript \
-     --contract-id <NEW_CONTRACT_ID> \
-     --network testnet \
-     --output-dir frontend/packages/follow-graph-client \
-     --overwrite
-   ```
-3. Update README "Deployed Contracts" table.
+Contract IDs are now live. Regenerate typed client:
+```bash
+stellar contract bindings typescript \
+  --contract-id CDNMUIWW6X565R2SWQNUGIQGDNLZA3QPNHO5YDA7YRXAB6PEICQH7ZHS \
+  --network testnet \
+  --output-dir frontend/packages/follow-graph-client \
+  --overwrite
+```
 
 ---
 
