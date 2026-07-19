@@ -3,18 +3,22 @@
 //! The Soroban RPC returns event topics and values as base64-encoded XDR
 //! `ScVal` strings. This module decodes them into typed Rust structs.
 //!
-//! ## Contract event shapes (from contracts/profile-registry/src/lib.rs)
+//! ## Contract event shapes (ProfileRegistry v2)
 //!
-//! `profile_registered` event  (#[contractevent(topics = ["profile_registered"])]):
-//!   topic[0] = ScVal::Symbol("profile_registered")   ← event name from #[contractevent]
+//! `profile_registered` event:
+//!   topic[0] = ScVal::Symbol("profile_registered")
 //!   topic[1] = ScVal::U128(profile_id)               ← the #[topic] field
 //!   value    = ScVal::Map { owner: Address, handle: Symbol }
-//!              (all non-topic fields packed into the body as an ScMap)
 //!
-//! `profile_updated` event (#[contractevent(topics = ["profile_updated"])]):
-//!   topic[0] = ScVal::Symbol("profile_updated")
+//! `profile_meta_updated` event (v2 — replaces generic `profile_updated`):
+//!   topic[0] = ScVal::Symbol("profile_meta_updated")
 //!   topic[1] = ScVal::U128(profile_id)
-//!   value    = ScVal::Map { field: Symbol("metadata" | "owner") }
+//!   value    = ScVal::Vec([U128(profile_id), Symbol(new_metadata_uri)])
+//!
+//! `profile_owner_xfrd` event (v2 — replaces generic `profile_updated`):
+//!   topic[0] = ScVal::Symbol("profile_owner_xfrd")
+//!   topic[1] = ScVal::U128(profile_id)
+//!   value    = ScVal::Vec([U128(profile_id), Address(new_owner)])
 
 use anyhow::{Context, Result, anyhow, bail};
 use stellar_xdr::{AccountId, Limits, PublicKey, ReadXdr, ScAddress, ScVal};
@@ -23,7 +27,10 @@ use stellar_xdr::{AccountId, Limits, PublicKey, ReadXdr, ScAddress, ScVal};
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventTopic {
     ProfileRegistered,
-    ProfileUpdated,
+    /// v2: metadata update — payload carries (profile_id: u128, new_metadata_uri: Symbol).
+    ProfileMetaUpdated,
+    /// v2: ownership transfer — payload carries (profile_id: u128, new_owner: Address).
+    ProfileOwnerTransferred,
     Unknown(String),
 }
 
@@ -36,7 +43,9 @@ pub fn decode_topic_name(b64: &str) -> Result<EventTopic> {
             let name = symbol_to_str(&s)?;
             match name.as_str() {
                 "profile_registered" => Ok(EventTopic::ProfileRegistered),
-                "profile_updated" => Ok(EventTopic::ProfileUpdated),
+                // v2 event names — distinct and self-documenting.
+                "profile_meta_updated" => Ok(EventTopic::ProfileMetaUpdated),
+                "profile_owner_xfrd" => Ok(EventTopic::ProfileOwnerTransferred),
                 other => Ok(EventTopic::Unknown(other.to_string())),
             }
         }
@@ -104,32 +113,59 @@ pub fn decode_profile_registered_value(b64: &str) -> Result<(String, String)> {
     Ok((owner, handle))
 }
 
-/// Decode the value body of a `profile_updated` event.
+/// Decode the value body of a v2 `profile_meta_updated` event.
 ///
-/// Expected shape: ScVal::Map with key "field" → ScVal::Symbol.
-/// Returns the field name ("metadata" or "owner").
-pub fn decode_profile_updated_value(b64: &str) -> Result<String> {
+/// v2 event shape: ScVal::Vec with two elements — (profile_id: u128, new_metadata_uri: Symbol).
+/// Returns the new metadata_uri as a String.
+///
+/// Note: the contract publishes via `env.events().publish(topic_tuple, (profile_id, metadata_uri))`.
+/// Soroban encodes a 2-tuple as ScVal::Vec([ScVal::U128(...), ScVal::Symbol(...)]).
+pub fn decode_profile_meta_updated_value(b64: &str) -> Result<String> {
     let val = ScVal::from_xdr_base64(b64, Limits::none())
-        .context("failed to decode profile_updated value XDR")?;
+        .context("failed to decode profile_meta_updated value XDR")?;
 
-    let map = match val {
-        ScVal::Map(Some(m)) => m,
+    // The data payload is a 2-tuple: (profile_id, metadata_uri).
+    // profile_id is at index 0, metadata_uri (Symbol) is at index 1.
+    let vec = match val {
+        ScVal::Vec(Some(v)) => v,
         other => bail!(
-            "expected ScVal::Map for profile_updated value, got {:?}",
+            "expected ScVal::Vec for profile_meta_updated value, got {:?}",
             other
         ),
     };
 
-    for entry in map.iter() {
-        if let ScVal::Symbol(k) = &entry.key
-            && symbol_to_str(k).unwrap_or_default() == "field"
-        {
-            return decode_symbol_from_scval(&entry.val);
-        }
+    if vec.len() < 2 {
+        bail!("profile_meta_updated value vec has fewer than 2 elements");
     }
 
-    bail!("profile_updated value missing 'field' key")
+    // Index 1 is the new metadata_uri (stored as Symbol in contract).
+    decode_symbol_from_scval(&vec[1])
 }
+
+/// Decode the value body of a v2 `profile_owner_xfrd` event.
+///
+/// v2 event shape: ScVal::Vec with two elements — (profile_id: u128, new_owner: Address).
+/// Returns the new owner as a strkey string (G...).
+pub fn decode_profile_owner_transferred_value(b64: &str) -> Result<String> {
+    let val = ScVal::from_xdr_base64(b64, Limits::none())
+        .context("failed to decode profile_owner_xfrd value XDR")?;
+
+    let vec = match val {
+        ScVal::Vec(Some(v)) => v,
+        other => bail!(
+            "expected ScVal::Vec for profile_owner_xfrd value, got {:?}",
+            other
+        ),
+    };
+
+    if vec.len() < 2 {
+        bail!("profile_owner_xfrd value vec has fewer than 2 elements");
+    }
+
+    // Index 1 is the new owner (ScVal::Address).
+    decode_address_from_scval(&vec[1])
+}
+
 
 // ── ScVal extractors ───────────────────────────────────────────────────────────
 
@@ -236,13 +272,32 @@ mod tests {
             .expect("XDR encode must succeed")
     }
 
-    fn make_updated_value_b64(field: &str) -> String {
-        let entries = vec![ScMapEntry {
-            key: make_sym("field"),
-            val: make_sym(field),
-        }];
-        let map = ScMap(VecM::try_from(entries).unwrap());
-        ScVal::Map(Some(map))
+    /// Build the v2 `profile_meta_updated` data payload: ScVal::Vec([u128, Symbol]).
+    fn make_meta_updated_value_b64(profile_id: u128, new_uri: &str) -> String {
+        let parts = UInt128Parts {
+            hi: (profile_id >> 64) as u64,
+            lo: profile_id as u64,
+        };
+        let items = vec![ScVal::U128(parts), make_sym(new_uri)];
+        ScVal::Vec(Some(VecM::try_from(items).unwrap().into()))
+            .to_xdr_base64(Limits::none())
+            .expect("XDR encode must succeed")
+    }
+
+    /// Build the v2 `profile_owner_xfrd` data payload: ScVal::Vec([u128, Address]).
+    fn make_owner_transferred_value_b64(profile_id: u128, owner_strkey: &str) -> String {
+        let strkey = stellar_strkey::Strkey::from_string(owner_strkey).expect("valid strkey");
+        let raw = match strkey {
+            stellar_strkey::Strkey::PublicKeyEd25519(k) => k.0,
+            _ => panic!("expected G... strkey"),
+        };
+        let address = ScAddress::Account(AccountId(PublicKey::PublicKeyTypeEd25519(Uint256(raw))));
+        let parts = UInt128Parts {
+            hi: (profile_id >> 64) as u64,
+            lo: profile_id as u64,
+        };
+        let items = vec![ScVal::U128(parts), ScVal::Address(address)];
+        ScVal::Vec(Some(VecM::try_from(items).unwrap().into()))
             .to_xdr_base64(Limits::none())
             .expect("XDR encode must succeed")
     }
@@ -259,9 +314,25 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_topic_name_profile_updated() {
+    fn test_decode_topic_name_profile_meta_updated() {
+        let b64 = make_symbol_b64("profile_meta_updated");
+        assert_eq!(decode_topic_name(&b64).unwrap(), EventTopic::ProfileMetaUpdated);
+    }
+
+    #[test]
+    fn test_decode_topic_name_profile_owner_transferred() {
+        let b64 = make_symbol_b64("profile_owner_xfrd");
+        assert_eq!(decode_topic_name(&b64).unwrap(), EventTopic::ProfileOwnerTransferred);
+    }
+
+    /// The old v1 "profile_updated" topic is now unknown — correctly falls through.
+    #[test]
+    fn test_decode_topic_name_legacy_profile_updated_is_unknown() {
         let b64 = make_symbol_b64("profile_updated");
-        assert_eq!(decode_topic_name(&b64).unwrap(), EventTopic::ProfileUpdated);
+        assert!(matches!(
+            decode_topic_name(&b64).unwrap(),
+            EventTopic::Unknown(_)
+        ));
     }
 
     #[test]
@@ -319,17 +390,26 @@ mod tests {
         assert_eq!(got_handle, handle);
     }
 
-    // ── decode_profile_updated_value ──────────────────────────────────────
+    // ── decode_profile_meta_updated_value ─────────────────────────────────
 
     #[test]
-    fn test_decode_profile_updated_metadata() {
-        let b64 = make_updated_value_b64("metadata");
-        assert_eq!(decode_profile_updated_value(&b64).unwrap(), "metadata");
+    fn test_decode_profile_meta_updated_value_roundtrip() {
+        let b64 = make_meta_updated_value_b64(1u128, "ipfs://new_cid");
+        assert_eq!(decode_profile_meta_updated_value(&b64).unwrap(), "ipfs://new_cid");
     }
 
     #[test]
-    fn test_decode_profile_updated_owner() {
-        let b64 = make_updated_value_b64("owner");
-        assert_eq!(decode_profile_updated_value(&b64).unwrap(), "owner");
+    fn test_decode_profile_meta_updated_empty_uri() {
+        let b64 = make_meta_updated_value_b64(42u128, "");
+        assert_eq!(decode_profile_meta_updated_value(&b64).unwrap(), "");
+    }
+
+    // ── decode_profile_owner_transferred_value ────────────────────────────
+
+    #[test]
+    fn test_decode_profile_owner_transferred_value_roundtrip() {
+        let owner = "GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB";
+        let b64 = make_owner_transferred_value_b64(1u128, owner);
+        assert_eq!(decode_profile_owner_transferred_value(&b64).unwrap(), owner);
     }
 }

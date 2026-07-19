@@ -1,174 +1,131 @@
-# ProfileRegistry — Deployment Reference
+# ProfileRegistry v2 — Deployment Reference
+
+> For the v1 deployment history (contract `CAVUZWNQ...MZO7ZLDU`, deployed 2026-07-11),
+> see [`DEPLOYMENT.v1.md`](./DEPLOYMENT.v1.md).
 
 ## Testnet Deployment
 
 | Field | Value |
 |---|---|
-| **Contract ID** | `CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU` |
+| **Contract ID** | `REPLACE_AFTER_DEPLOY` |
 | **Network** | Stellar Testnet (`Test SDF Network ; September 2015`) |
 | **Deployed by** | `GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB` (alias: `alice`) |
 | **Admin address** | `GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB` |
-| **Deployed at** | 2026-07-11 |
-| **WASM hash** | `fabb1c738df685c74fb99eef77158bcf9b11c9e16e4f93445362429a1462cff5` |
-| **WASM size** | 8,868 bytes (optimised) |
+| **Deployed at** | TBD |
+| **WASM hash** | `REPLACE_AFTER_UPLOAD` |
 | **soroban-sdk version** | `26.1.0` |
 | **stellar-cli version** | `27.0.0` |
 
-Verify independently:
-- [Stellar Expert](https://stellar.expert/explorer/testnet/contract/CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU)
-- [Stellar Lab](https://lab.stellar.org/r/testnet/contract/CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU)
-
-Deployment transactions:
-- WASM upload: [`2504c5e207d3eedadb83925fc53030a84cc54c0337762117a84c7e3be0bfdfcc`](https://stellar.expert/explorer/testnet/tx/2504c5e207d3eedadb83925fc53030a84cc54c0337762117a84c7e3be0bfdfcc)
-- Contract deploy: [`0594697e917bf4255323b70c7861f0c4bcc70a57fa94485d7ad7f266e570a92c`](https://stellar.expert/explorer/testnet/tx/0594697e917bf4255323b70c7861f0c4bcc70a57fa94485d7ad7f266e570a92c)
+Verify independently once deployed:
+- https://stellar.expert/explorer/testnet/contract/REPLACE_AFTER_DEPLOY
 
 ---
 
-## Build
+## What Changed from v1
+
+1. **`follower_count`/`following_count` removed from `Profile` struct** — these were
+   permanently-zero vestigial fields in v1. Real counts live in `FollowGraph` and always
+   did. Removing them eliminates a footgun that required a README warning to prevent misuse.
+
+2. **Richer event payloads** — v1 emitted a generic `profile_updated` event with only a
+   `field` discriminator (`"metadata"` or `"owner"`), forcing indexers to do a follow-up
+   `get_profile` RPC call to learn the new value. v2 emits distinct events that carry the
+   new value inline:
+   - `profile_meta_updated` → `(profile_id: u128, new_metadata_uri: Symbol)`
+   - `profile_owner_xfrd` → `(profile_id: u128, new_owner: Address)`
+
+3. **`upgrade(new_wasm_hash)` function** — admin-authenticated against the address stored
+   in contract state (not a caller-supplied parameter). See security note below.
+
+4. **`version() → u32`** — returns `2`. Allows indexers and tooling to detect which code
+   revision is running without guessing.
+
+---
+
+## Build & Deploy
 
 ```bash
 cd contracts
-stellar contract build
+
+# Build
+stellar contract build --package profile-registry
 # Output: target/wasm32v1-none/release/profile_registry.wasm
-```
 
-Requires:
-- Rust with `wasm32v1-none` target (`rustup target add wasm32v1-none`)
-- `stellar-cli` v27+ (`cargo install --locked stellar-cli`)
+# Upload WASM and record the hash
+stellar contract upload \
+  --wasm target/wasm32v1-none/release/profile_registry.wasm \
+  --source alice --network testnet
+# → record the sha256 hash output
 
----
-
-## Deploy (fresh deployment)
-
-```bash
-# 1. Generate and fund a deployer key (one-time)
-stellar keys generate alice --network testnet --fund
-
-# 2. Get alice's public key
-stellar keys address alice
-
-# 3. Build
-cd contracts
-stellar contract build
-
-# 4. Deploy, passing the constructor's admin argument
+# Deploy
 stellar contract deploy \
   --wasm target/wasm32v1-none/release/profile_registry.wasm \
-  --source alice \
-  --network testnet \
-  --alias profile_registry \
-  -- \
-  --admin <ALICE_PUBLIC_KEY>
+  --source alice --network testnet \
+  --alias profile_registry_v2 \
+  -- --admin GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB
+# → record the contract ID
 
-# Returns the contract ID.
+# Re-register the weave_dev demo profile for continuity
+stellar contract invoke \
+  --id <NEW_CONTRACT_ID> --source alice --network testnet \
+  -- register \
+  --owner GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB \
+  --handle weave_dev \
+  --metadata_uri "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"
+
+# Verify version
+stellar contract invoke \
+  --id <NEW_CONTRACT_ID> --source alice --network testnet \
+  -- version
+# → "2"
 ```
 
 ---
 
-## Live Invocation Examples
+## Post-Deploy: Update Downstream Config
 
-All examples use the deployed testnet contract ID. Replace `<YOUR_KEY_ALIAS>` and
-`<YOUR_STELLAR_ADDRESS>` with your own values.
+After recording the new contract ID:
 
-### `register` — create a new profile
-
-```bash
-stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
-  --source <YOUR_KEY_ALIAS> \
-  --network testnet \
-  -- \
-  register \
-  --owner <YOUR_STELLAR_ADDRESS> \
-  --handle your_handle \
-  --metadata_uri "ipfs://<YOUR_CID>"
-# Returns the assigned profile_id (u128), e.g. "1"
-```
-
-Handle rules:
-- 3–30 characters
-- Lowercase ASCII letters, digits, and `_` only — uppercase is folded to lowercase automatically
-- Must be unique (case-insensitive)
-
-### `get_profile` — fetch a profile by ID
-
-```bash
-stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
-  --source <YOUR_KEY_ALIAS> \
-  --network testnet \
-  -- \
-  get_profile \
-  --profile_id 1
-# Returns:
-# {
-#   "created_at": 1783789266,
-#   "follower_count": 0,
-#   "following_count": 0,
-#   "handle": "weave_dev",
-#   "metadata_uri": "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-#   "owner": "GALDKWEV7OOWI45GUJT3X6LKNER6IBRK6RB5BZGE776HZ2RPBFSZHNRB"
-# }
-```
-
-### `resolve_handle` — look up a profile_id by handle (case-insensitive)
-
-```bash
-stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
-  --source <YOUR_KEY_ALIAS> \
-  --network testnet \
-  -- \
-  resolve_handle \
-  --handle weave_dev
-# Returns: "1"
-```
-
-### `update_metadata` — update a profile's metadata URI
-
-```bash
-stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
-  --source <YOUR_KEY_ALIAS> \
-  --network testnet \
-  -- \
-  update_metadata \
-  --profile_id 1 \
-  --metadata_uri "ipfs://<NEW_CID>"
-# Requires auth from the profile's current owner.
-```
-
-### `transfer_ownership` — transfer a profile to a new owner
-
-```bash
-stellar contract invoke \
-  --id CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU \
-  --source <YOUR_KEY_ALIAS> \
-  --network testnet \
-  -- \
-  transfer_ownership \
-  --profile_id 1 \
-  --new_owner <NEW_OWNER_STELLAR_ADDRESS>
-# Requires auth from the profile's current owner.
-```
+1. `backend/.env` and `backend/.env.example` — set `PROFILE_REGISTRY_CONTRACT_ID`
+2. `frontend/.env.local` — set `NEXT_PUBLIC_PROFILE_REGISTRY_ID`
+3. Regenerate typed client:
+   ```bash
+   stellar contract bindings typescript \
+     --contract-id <NEW_CONTRACT_ID> \
+     --network testnet \
+     --output-dir frontend/packages/profile-registry-client \
+     --overwrite
+   ```
+4. Update README "Deployed Contracts" table.
 
 ---
 
-## Live Invocations Confirmed at Deployment
+## Storage Hygiene (Security Note)
 
-| Function | Tx / Result |
-|---|---|
-| `register` (handle: `weave_dev`) | [`10df30b8ffbd3fc3a9d9626d90eb1ea94e10ed4a0f13c497e010ebdbb996a27c`](https://stellar.expert/explorer/testnet/tx/10df30b8ffbd3fc3a9d9626d90eb1ea94e10ed4a0f13c497e010ebdbb996a27c) → `"1"` |
-| `get_profile` (id: 1) | Returned full profile struct ✅ |
-| `resolve_handle` (handle: `weave_dev`) | Returned `"1"` ✅ |
-| `register` (handle: `weave_graph_demo`) | [`f1cc8e4e1631a3722a1b465b33cf9d66c9dc9ad58ebc745a1ae6177370734990`](https://stellar.expert/explorer/testnet/tx/f1cc8e4e1631a3722a1b465b33cf9d66c9dc9ad58ebc745a1ae6177370734990) → `"2"` — registered 2026-07-12 as part of FollowGraph end-to-end demo |
+**Instance storage** (loads in full on every interaction — a growing collection here is a
+DoS risk) contains only:
+- `DataKey::Admin` — single Address, fixed size ✅
+- `DataKey::NextId` — single u128, fixed size ✅
+
+All per-profile data (`DataKey::Profile(u128)`, `DataKey::Handle(Symbol)`) lives in
+**persistent storage**, keyed per entry. No unbounded collection in instance storage. ✅
+
+**Admin upgrade power:** The `upgrade()` function is authenticated against the admin
+address stored in contract state — never from a caller-supplied argument. An attacker
+supplying their own address as "admin" in a function argument would be rejected because
+the contract ignores that argument and loads the real admin from storage instead.
+
+This admin key is a centralization point: whoever holds it can upgrade the contract's
+Wasm bytecode. This is acceptable for testnet iteration. Before any mainnet deployment,
+consider protecting the admin key with a multisig or timelock — tracked as a future
+consideration, not implemented here.
 
 ---
 
 ## Test Results
 
 ```
-running 19 tests
+running 25 tests
 test test::test_duplicate_handle_different_case ... ok
 test test::test_duplicate_handle_same_case ... ok
 test test::test_get_profile_not_found ... ok
@@ -184,22 +141,16 @@ test test::test_register_requires_owner_auth ... ok
 test test::test_register_returns_id_starting_at_one ... ok
 test test::test_resolve_handle_case_insensitive ... ok
 test test::test_resolve_handle_not_found ... ok
+test test::test_transfer_ownership_event_carries_new_owner ... ok
 test test::test_transfer_ownership_non_owner_fails ... ok
 test test::test_transfer_ownership_success ... ok
 test test::test_update_metadata_auth_enforced ... ok
+test test::test_update_metadata_event_carries_new_value ... ok
 test test::test_update_metadata_success ... ok
+test test::test_upgrade_fails_for_non_admin ... ok
+test test::test_upgrade_succeeds_for_stored_admin ... ok
+test test::test_upgrade_to_self_preserves_state ... ok
+test test::test_version_returns_2 ... ok
 
-test result: ok. 19 passed; 0 failed; 0 ignored
+test result: ok. 25 passed; 0 failed; 0 ignored
 ```
-
----
-
-## Contract Design Notes
-
-- **Constructor (CAP-0058):** Initialized via `__constructor(admin)` at deploy time. No separate `init()` — eliminates front-running on deploy.
-- **Profile IDs:** `u128`, monotonically incrementing from 1. ID 0 is reserved/invalid and never issued.
-- **Handle normalisation:** Handles are folded to lowercase before storage and lookup. `"Alice"` and `"alice"` resolve to the same handle.
-- **Auth model:** Every mutating function loads the owner from storage and calls `owner.require_auth()` — never trusts a caller-supplied address. Read functions (`get_profile`, `resolve_handle`) are fully permissionless.
-- **Storage:** `Profile` and `Handle` entries use **persistent** storage with TTL extended to ~1 year (6,307,200 ledgers at 5s close time) on every write, with a threshold of ~30 days (518,400 ledgers). `Admin` and `NextId` use instance storage.
-- **Events:** Every mutation emits an event. Topics are `profile_registered` and `profile_updated` — canonical names referenced in the indexer design in `docs/weave_technical_spec.md`.
-- **follower_count / following_count:** Fields exist in the `Profile` struct but are always `0` and are never mutated by this contract. Real counts are owned by `FollowGraph` (`CBO2USOJ4MII4GWULU2YGBIAIUN7333SFU5S5R3GKLAP6FGT5DSO5BOR`) — query `get_follower_count` / `get_following_count` there, not here. See `contracts/follow-graph/DEPLOYMENT.md` for the full rationale.

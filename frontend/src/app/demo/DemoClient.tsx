@@ -250,8 +250,8 @@ function ConnectStep({
         type="button"
         onClick={onConnect}
         disabled={wallet.status === "connecting"}
-        className="min-h-[44px] px-6 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm
-          hover:bg-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
+        className="min-h-11 px-6 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm
+          hover:bg-indigo-700 focus-visible:outline focus-visible:outline-offset-2
           focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         {wallet.status === "connecting" ? "Opening wallet picker…" : "Connect Wallet"}

@@ -119,9 +119,6 @@ pub async fn update_profile_metadata(
 }
 
 /// Update `owner` for an existing profile and bump `updated_at`.
-/// Not yet called in the ingestion worker (profile_updated events do not carry
-/// the new value inline — enrichment from RPC is a future task).
-#[allow(dead_code)]
 pub async fn update_profile_owner(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     profile_id: &BigDecimal,

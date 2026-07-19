@@ -99,22 +99,6 @@
                   },
                   {
                     "key": {
-                      "symbol": "follower_count"
-                    },
-                    "val": {
-                      "u32": 0
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "following_count"
-                    },
-                    "val": {
-                      "u32": 0
-                    }
-                  },
-                  {
-                    "key": {
                       "symbol": "handle"
                     },
                     "val": {
@@ -240,28 +224,21 @@
             "topics": [
               {
                 "symbol": "profile_registered"
-              },
-              {
-                "u128": "1"
               }
             ],
             "data": {
-              "map": [
+              "vec": [
                 {
-                  "key": {
-                    "symbol": "handle"
-                  },
-                  "val": {
-                    "symbol": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                  }
+                  "u128": "1"
                 },
                 {
-                  "key": {
-                    "symbol": "owner"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                  }
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "symbol": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                  "string": ""
                 }
               ]
             }

@@ -1,6 +1,6 @@
 #![cfg_attr(target_family = "wasm", no_std)]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Vec};
+use soroban_sdk::{BytesN, contract, contracterror, contractimpl, contracttype, Address, Env, Vec};
 
 // ── Cross-contract import ──────────────────────────────────────────────────────
 // Generates profile_registry::Client, profile_registry::Profile, and
@@ -9,6 +9,9 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, 
 // If this hash fails at build time it means the WASM has changed — do not bypass
 // the check; investigate and rebuild profile-registry first.
 mod profile_registry {
+    // Hash pinned to ProfileRegistry v2 WASM.
+    // If this hash fails at build time the v2 profile_registry.wasm has changed —
+    // rebuild profile-registry first, then update this hash.
     soroban_sdk::contractimport!(
         file = "../target/wasm32v1-none/release/profile_registry.wasm"
     );
@@ -97,15 +100,32 @@ impl FollowGraph {
     // ── Constructor (CAP-0058) ───────────────────────────────────────────────
 
     /// Initialise FollowGraph with an admin address and the address of the
-    /// already-deployed ProfileRegistry contract.
-    ///
-    /// No counters or lists need initialising — absent keys default to 0 /
-    /// empty on first read.
+    /// already-deployed ProfileRegistry v2 contract.
     pub fn __constructor(env: Env, admin: Address, profile_registry: Address) {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
             .instance()
             .set(&DataKey::ProfileRegistry, &profile_registry);
+    }
+
+    // ── Upgradability ────────────────────────────────────────────────────────
+
+    /// Returns the contract version. This deployment is v2.
+    pub fn version() -> u32 {
+        2
+    }
+
+    /// Upgrade the contract Wasm to `new_wasm_hash`.
+    ///
+    /// Auth is required from the admin address stored in *contract state*, not
+    /// from any caller-supplied parameter — same security pattern as
+    /// ProfileRegistry.upgrade(). See that contract's comments for full rationale.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        // SECURITY: load from state, never accept as parameter.
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     // ── Mutations ────────────────────────────────────────────────────────────
@@ -788,10 +808,8 @@ mod test {
         let profile = pr.get_profile(&id);
         assert_eq!(profile.owner, owner);
         assert_eq!(profile.handle, soroban_sdk::Symbol::new(&env, "alice"));
-        // follower_count / following_count are permanently 0 in ProfileRegistry —
-        // counts are owned by FollowGraph (see §2 of spec / contract design notes).
-        assert_eq!(profile.follower_count, 0u32);
-        assert_eq!(profile.following_count, 0u32);
+        // v2: follower_count / following_count removed from Profile struct —
+        // real counts are owned by FollowGraph (this contract). See DataKey::FollowerCount.
     }
 
     // ── Utility ──────────────────────────────────────────────────────────────
@@ -806,5 +824,92 @@ mod test {
             4 => "follower4",
             _ => "followerx",
         }
+    }
+
+    // ── version / upgrade ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_version_returns_2() {
+        let (_env, fg, _pr, _) = setup();
+        assert_eq!(fg.version(), 2u32);
+    }
+
+    /// upgrade() by the real stored admin must succeed and contract still works.
+    #[test]
+    fn test_upgrade_succeeds_for_stored_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let pr_admin = Address::generate(&env);
+        let pr_id = env.register(PROFILE_REGISTRY_WASM, (&pr_admin,));
+
+        let fg_admin = Address::generate(&env);
+        let fg_id = env.register(FollowGraph, (&fg_admin, &pr_id));
+        let fg_client = FollowGraphClient::new(&env, &fg_id);
+
+        let wasm_hash = env.deployer().upload_contract_wasm(follow_graph::WASM);
+        // Should not panic.
+        fg_client.upgrade(&wasm_hash);
+        assert_eq!(fg_client.version(), 2u32);
+    }
+
+    /// upgrade() called by a non-admin must fail — tests the specific exploit
+    /// pattern from §2.1: admin is loaded from storage, not caller-supplied.
+    #[test]
+    fn test_upgrade_fails_for_non_admin() {
+        let env = Env::default();
+
+        let pr_admin = Address::generate(&env);
+        let pr_id = env.register(PROFILE_REGISTRY_WASM, (&pr_admin,));
+
+        let fg_admin = Address::generate(&env);
+        let fg_id = env.register(FollowGraph, (&fg_admin, &pr_id));
+        let fg_client = FollowGraphClient::new(&env, &fg_id);
+
+        let attacker = Address::generate(&env);
+        let wasm_hash = {
+            env.mock_all_auths();
+            env.deployer().upload_contract_wasm(follow_graph::WASM)
+        };
+
+        // Mock auth only for attacker — real admin has NOT authorised.
+        env.mock_auths(&[MockAuth {
+            address: &attacker,
+            invoke: &MockAuthInvoke {
+                contract: &fg_id,
+                fn_name: "upgrade",
+                args: (wasm_hash.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let result = fg_client.try_upgrade(&wasm_hash);
+        assert!(result.is_err(), "upgrade must fail for non-admin");
+    }
+
+    /// After a same-wasm upgrade, state (edges, counts, lists) is preserved.
+    #[test]
+    fn test_upgrade_to_self_preserves_follow_state() {
+        let (env, fg, pr, _) = setup();
+        let (_, alice_id) = register_profile(&env, &pr, "alice");
+        let (_, bob_id) = register_profile(&env, &pr, "bob");
+        fg.follow(&alice_id, &bob_id);
+        assert!(fg.is_following(&alice_id, &bob_id));
+        assert_eq!(fg.get_follower_count(&bob_id), 1u32);
+
+        let wasm_hash = env.deployer().upload_contract_wasm(follow_graph::WASM);
+        fg.upgrade(&wasm_hash);
+
+        // State must survive the upgrade.
+        assert!(fg.is_following(&alice_id, &bob_id));
+        assert_eq!(fg.get_follower_count(&bob_id), 1u32);
+        assert_eq!(fg.version(), 2u32);
+    }
+
+    // ── Self-WASM reference for upgrade tests ─────────────────────────────────
+    mod follow_graph {
+        soroban_sdk::contractimport!(
+            file = "../target/wasm32v1-none/release/follow_graph.wasm"
+        );
     }
 }

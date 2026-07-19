@@ -34,8 +34,8 @@ use tracing::{debug, error, info, warn};
 use crate::config::Config;
 use crate::db;
 use crate::parse::{
-    EventTopic, decode_profile_id, decode_profile_registered_value, decode_profile_updated_value,
-    decode_topic_name,
+    EventTopic, decode_profile_id, decode_profile_meta_updated_value,
+    decode_profile_owner_transferred_value, decode_profile_registered_value, decode_topic_name,
 };
 
 /// Maximum events to fetch per RPC call. The server caps this at 10 000;
@@ -153,7 +153,8 @@ async fn tick(rpc: &RpcClient, pool: &PgPool, cfg: &Config) -> Result<usize> {
 
         let topic_str = match &topic_name {
             EventTopic::ProfileRegistered => "profile_registered",
-            EventTopic::ProfileUpdated => "profile_updated",
+            EventTopic::ProfileMetaUpdated => "profile_meta_updated",
+            EventTopic::ProfileOwnerTransferred => "profile_owner_xfrd",
             EventTopic::Unknown(name) => {
                 debug!(name, event_id = %event.id, "Unknown event topic — skipping");
                 continue;
@@ -262,10 +263,8 @@ async fn process_event(
             let (owner, handle) = decode_profile_registered_value(value_b64)
                 .context("failed to decode profile_registered value")?;
 
-            // `created_at` (the ledger timestamp) is stored in the Profile struct
-            // in contract storage but is NOT emitted in the event body. We store 0
-            // as a sentinel and note that it can be enriched later via get_profile.
-            // The `ledger` field gives a rough timestamp proxy if needed.
+            // `created_at` is in contract storage but not in the event payload.
+            // Store 0 as sentinel; ledger timestamp is a reasonable proxy.
             db::upsert_profile(&mut db_tx, &profile_id, &owner, &handle, "", 0).await?;
 
             info!(
@@ -277,43 +276,36 @@ async fn process_event(
             );
         }
 
-        EventTopic::ProfileUpdated => {
-            let field = decode_profile_updated_value(value_b64)
-                .context("failed to decode profile_updated value")?;
+        // v2: profile_meta_updated carries the new metadata_uri directly —
+        // no follow-up RPC call needed. This replaces the old profile_updated
+        // workaround that only bumped updated_at and left metadata_uri stale.
+        EventTopic::ProfileMetaUpdated => {
+            let new_uri = decode_profile_meta_updated_value(value_b64)
+                .context("failed to decode profile_meta_updated value")?;
 
-            // The `profile_updated` event carries only `field` ("metadata" or
-            // "owner") — not the new value. This event tells us *something*
-            // changed and bumps `updated_at` so consumers know to re-read if
-            // needed. A future enhancement would do a follow-up get_profile RPC
-            // call here to fetch the current value and write it properly.
-            match field.as_str() {
-                "metadata" => {
-                    // Touch updated_at; metadata_uri enrichment is a future task.
-                    db::update_profile_metadata(&mut db_tx, &profile_id, "").await?;
-                    info!(
-                        profile_id = profile_id_raw,
-                        field = "metadata",
-                        "Ingested profile_updated (metadata field; updated_at bumped)"
-                    );
-                }
-                "owner" => {
-                    // Touch updated_at; owner enrichment is a future task.
-                    db::update_profile_metadata(&mut db_tx, &profile_id, "").await?;
-                    info!(
-                        profile_id = profile_id_raw,
-                        field = "owner",
-                        "Ingested profile_updated (owner field; updated_at bumped)"
-                    );
-                }
-                other => {
-                    warn!(
-                        profile_id = profile_id_raw,
-                        field = other,
-                        "Unrecognised profile_updated field — updated_at bumped"
-                    );
-                    db::update_profile_metadata(&mut db_tx, &profile_id, "").await?;
-                }
-            }
+            db::update_profile_metadata(&mut db_tx, &profile_id, &new_uri).await?;
+
+            info!(
+                profile_id = profile_id_raw,
+                new_uri = %new_uri,
+                ledger,
+                "Ingested profile_meta_updated"
+            );
+        }
+
+        // v2: profile_owner_xfrd carries the new owner address directly.
+        EventTopic::ProfileOwnerTransferred => {
+            let new_owner = decode_profile_owner_transferred_value(value_b64)
+                .context("failed to decode profile_owner_xfrd value")?;
+
+            db::update_profile_owner(&mut db_tx, &profile_id, &new_owner).await?;
+
+            info!(
+                profile_id = profile_id_raw,
+                new_owner = %new_owner,
+                ledger,
+                "Ingested profile_owner_xfrd"
+            );
         }
 
         EventTopic::Unknown(_) => unreachable!("filtered above"),

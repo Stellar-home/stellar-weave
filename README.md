@@ -41,30 +41,42 @@ Run it locally: `cd frontend && npm install && npm run dev`, then visit `/demo`.
 
 | Contract | Status | Testnet Contract ID | Docs |
 |---|---|---|---|
-| `ProfileRegistry` | ✅ Live — 5 public functions | [`CAVUZWNQ...MZO7ZLDU`](https://stellar.expert/explorer/testnet/contract/CAVUZWNQ322DFBNDEENP6GBYF6ESZFQDIEJN5C367WIG23AFMZO7ZLDU) | [`contracts/profile-registry/DEPLOYMENT.md`](./contracts/profile-registry/DEPLOYMENT.md) |
-| `FollowGraph` | ✅ Live | [`CBO2USOJ...T5DSO5BOR`](https://stellar.expert/explorer/testnet/contract/CBO2USOJ4MII4GWULU2YGBIAIUN7333SFU5S5R3GKLAP6FGT5DSO5BOR) | [`contracts/follow-graph/DEPLOYMENT.md`](./contracts/follow-graph/DEPLOYMENT.md) |
+| `ProfileRegistry` | ✅ Live v2 — 6 public functions | deploy in progress — see [`DEPLOYMENT.md`](./contracts/profile-registry/DEPLOYMENT.md) | [`contracts/profile-registry/DEPLOYMENT.md`](./contracts/profile-registry/DEPLOYMENT.md) |
+| `FollowGraph` | ✅ Live v2 | deploy in progress — see [`DEPLOYMENT.md`](./contracts/follow-graph/DEPLOYMENT.md) | [`contracts/follow-graph/DEPLOYMENT.md`](./contracts/follow-graph/DEPLOYMENT.md) |
 | `ReputationRegistry` | ⏳ Not started | — | — |
 | `PostAnchor` | ⏳ Not started | — | — |
 
-**`ProfileRegistry`'s 5 functions:** `register`, `get_profile`, `resolve_handle`,
-`update_metadata`, `transfer_ownership`. (The last two are fully implemented, tested, and
-deployed — easy to miss since most examples only demo the first three.)
+> **v1 contracts** (`CAVUZWNQ...MZO7ZLDU` and `CBO2USOJ...T5DSO5BOR`) remain live on
+> testnet as immutable historical records. See [`DEPLOYMENT.v1.md`](./contracts/profile-registry/DEPLOYMENT.v1.md)
+> and [`DEPLOYMENT.v1.md`](./contracts/follow-graph/DEPLOYMENT.v1.md) for the original
+> deployment proofs. The v2 redeploy fixed two design flaws that couldn't be patched
+> in the deployed immutable contracts: permanently-zero `follower_count`/`following_count`
+> fields in `ProfileRegistry`, and event payloads that didn't carry the new value.
 
-> **⚠️ `follower_count` / `following_count` on `Profile` are always `0`.** These fields
-> exist in `ProfileRegistry`'s struct but are never written to — `ProfileRegistry` was
-> deployed before `FollowGraph` existed and has no mutation path for them, and Soroban
-> contracts are immutable post-deploy. **Real counts live in `FollowGraph`** —
-> call `get_follower_count` / `get_following_count` there, not `ProfileRegistry.get_profile`.
-> See `contracts/follow-graph/DEPLOYMENT.md` for the full design note. If you're building a
-> client against `ProfileRegistry` alone, do not surface its `follower_count` field to users.
+**`ProfileRegistry` v2 functions:** `register`, `get_profile`, `resolve_handle`,
+`update_metadata`, `transfer_ownership`, `upgrade`, `version`.
+
+> **⚠️ `follower_count` / `following_count` no longer exist in `ProfileRegistry` v2.**
+> They were removed entirely — they were permanently zero and served only to mislead.
+> **Real counts live in `FollowGraph`** — call `get_follower_count` / `get_following_count`
+> there. See `contracts/follow-graph/DEPLOYMENT.md` for the full design note.
+
+> **Trust assumption — admin upgrade key:** Both v2 contracts have an `upgrade()` function
+> authenticated against an admin address stored in contract state. The holder of the admin
+> key (`GALDKWEV7...PBFSZHNRB`) can replace either contract's Wasm bytecode. This is a
+> real centralization point, stated plainly: anyone evaluating this protocol should factor
+> it in. It is acceptable for testnet iteration. Before any mainnet deployment, the admin
+> key should be protected by a multisig or timelock — tracked as a future consideration.
 
 **Live proof, verifiable independently by anyone:** Profile 1 followed Profile 2 on testnet —
-[`follow_created` transaction](https://stellar.expert/explorer/testnet/tx/35c06183c749f0d9980b494b00b041a9e55d0293018d318ac75e71e9b200205b),
+[`follow_created` transaction](https://stellar.expert/explorer/testnet/tx/35c06183c749f0d9980b494b00b041a9e55d0293018d318ac75e71e9b200205b)
+*(v1 chain — v2 follow proof will be added post-redeploy)*,
 after which `is_following(1, 2)` returns `true` and `get_follower_count(2)` returns `1` against
 live RPC.
 
-37 unit tests passing across both contracts (19 + 18), covering auth enforcement, handle
-validation, pagination boundaries, and cross-contract call correctness.
+47 unit tests passing across both v2 contracts (25 + 22), covering auth enforcement, handle
+validation, pagination boundaries, cross-contract call correctness, upgrade auth security,
+and upgrade state preservation.
 
 ---
 

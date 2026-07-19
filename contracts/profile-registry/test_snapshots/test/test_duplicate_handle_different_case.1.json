@@ -100,22 +100,6 @@
                   },
                   {
                     "key": {
-                      "symbol": "follower_count"
-                    },
-                    "val": {
-                      "u32": 0
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "following_count"
-                    },
-                    "val": {
-                      "u32": 0
-                    }
-                  },
-                  {
-                    "key": {
                       "symbol": "handle"
                     },
                     "val": {
